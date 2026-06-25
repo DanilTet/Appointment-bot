@@ -1,0 +1,294 @@
+import asyncio
+from datetime import datetime, timedelta
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# Импортируем наши настройки и базы
+from config import ADMIN_IDS, SKIP_ROWS
+from services.db import supabase, last_seen_doctors, save_state, get_admin_settings
+from services.sheets import (
+    schedule_sheet, 
+    get_monday_str, 
+    get_col_idx, 
+    get_appointment_duration, 
+    get_schedule_report
+)
+
+# --- 1. МОНИТОРИНГ И СИНХРОНИЗАЦИЯ ---
+async def monitor_and_sync_entries(bot: Bot):
+    print("🤖 [SYSTEM] Запуск повного циклу моніторингу...", flush=True)
+    
+    while True:
+        try:
+            now = datetime.now() + timedelta(hours=2)
+            state_changed = False
+            cached_sheets_data = {}
+            
+            # Отримуємо активні записи з бази (confirmed/pending)
+            db_res = supabase.table("appointments").select("*").filter("status", "in", '("confirmed", "pending")').execute()
+            active_db_records = {(r['date'], str(r['row_idx'])): r for r in db_res.data}
+            found_ids = set()
+
+            try:
+                available_sheets = [s.title for s in schedule_sheet.worksheets()]
+            except Exception as e:
+                print(f"❌ [DATABASE ERROR] Не вдалося отримати список листів: {e}", flush=True)
+                await asyncio.sleep(60)
+                continue
+
+            for day_offset in range(7):
+                target_date = now + timedelta(days=day_offset)
+                if target_date.weekday() == 6: continue 
+                
+                date_str = target_date.strftime("%d.%m.%Y")
+                sheet_name = get_monday_str(target_date) 
+
+                if sheet_name not in available_sheets:
+                    continue 
+
+                if sheet_name not in cached_sheets_data:
+                    try:
+                        ws = schedule_sheet.worksheet(sheet_name)
+                        cached_sheets_data[sheet_name] = ws.get_all_values()
+                    except Exception as e:
+                        print(f"⚠️ [SHEETS ERROR] Помилка читання листа {sheet_name}: {e}", flush=True)
+                        continue
+                
+                data = cached_sheets_data[sheet_name]
+                col_idx = get_col_idx(target_date) - 1
+                curr_row = 4
+                slots_to_skip = 0
+
+                while curr_row < len(data):
+                    if (curr_row + 1) in SKIP_ROWS:
+                        curr_row += 1
+                        continue
+                    if curr_row + 4 >= len(data): break 
+                    
+                    if slots_to_skip > 0:
+                        slots_to_skip -= 1
+                        curr_row += 5
+                        continue
+
+                    patient_info = data[curr_row + 1][col_idx].strip()
+                    time_val = data[curr_row][col_idx - 1].strip()
+                    sheet_stage = data[curr_row + 4][col_idx].strip()
+                    row_idx_str = str(curr_row + 1)
+                    
+                    # Получаем имя врача для проверки бага!
+                    doctor_name = data[curr_row + 2][col_idx].strip() or "Не вказано"
+                    
+                    slot_key = (date_str, row_idx_str)
+
+                    if patient_info:
+                        # --- 🎯 БАГ ИСПРАВЛЕН: Теперь ищем Данило в переменной врача, а не пациента ---
+                        if "данило" in doctor_name.lower():
+                            danilo_alert_key = f"dan_alert_{date_str}_{row_idx_str}_{patient_info}"
+                            
+                            if last_seen_doctors.get(danilo_alert_key) != "sent":
+                                print(f"🎯 [HIT] Знайдено запис до Данила: {patient_info} на {date_str}", flush=True)
+                                for admin_id in ADMIN_IDS:
+                                    try:
+                                        try:
+                                            settings = await get_admin_settings(admin_id)
+                                            is_enabled = settings.get("track_danilo", True)
+                                        except: is_enabled = True
+
+                                        if is_enabled:
+                                            alert_msg = (
+                                                f"‼️‼️‼️ <b>НОВИЙ ЗАПИС: ДАНИЛО</b> ‼️‼️‼️\n\n"
+                                                f"📅 Дата: <b>{date_str}</b>\n"
+                                                f"🕒 Час: <b>{time_val}</b>\n"
+                                                f"📝 Пацієнт: <code>{patient_info}</code>\n"
+                                                f"👨‍⚕️ Лікар: {doctor_name}"
+                                            )
+                                            await bot.send_message(admin_id, alert_msg, parse_mode="HTML")
+                                    except Exception as e:
+                                        print(f"❌ Помилка відправки Telegram: {e}", flush=True)
+                                
+                                last_seen_doctors[danilo_alert_key] = "sent"
+                                state_changed = True
+
+                        # --- 🔄 СИНХРОНІЗАЦІЯ ---
+                        if slot_key in active_db_records:
+                            rec = active_db_records[slot_key]
+                            found_ids.add(rec['id'])
+                            
+                            db_stage = rec.get('execution_stage', '')
+                            if sheet_stage and sheet_stage != db_stage:
+                                should_sync = True
+                                if db_stage == "In_Progress_Notified" and sheet_stage == "Запланировано": should_sync = False
+                                elif db_stage == "Wait_Finish_Click" and sheet_stage != "Выполенено": should_sync = False
+
+                                if should_sync:
+                                    supabase.table("appointments").update({"execution_stage": sheet_stage}).eq("id", rec['id']).execute()
+                                    active_db_records[slot_key]['execution_stage'] = sheet_stage
+                                    
+                                    for admin_id in ADMIN_IDS:
+                                        try:
+                                            settings = await get_admin_settings(admin_id)
+                                            if settings.get("sync_notifications", True):
+                                                sync_msg = (
+                                                    f"🔄 <b>Синхронізація з таблицею</b>\n\n"
+                                                    f"Пацієнт: {patient_info}\nЧас: {time_val}\n"
+                                                    f"Статус змінено на: <b>{sheet_stage}</b>"
+                                                )
+                                                await bot.send_message(admin_id, sync_msg, parse_mode="HTML")
+                                        except: pass
+                        else:
+                            # Новий ручний запис
+                            new_appt = {
+                                "user_id": 0, "name": patient_info, 
+                                "service": data[curr_row][col_idx].strip(),
+                                "anesthesia": data[curr_row + 3][col_idx].strip(), 
+                                "doctor": doctor_name, "phone": "Ручний запис",
+                                "date": date_str, "time": time_val, "row_idx": row_idx_str,
+                                "status": "confirmed", "execution_stage": sheet_stage if sheet_stage else "Запланировано"
+                            }
+                            res = supabase.table("appointments").insert(new_appt).execute()
+                            if res.data: found_ids.add(res.data[0]['id'])
+                            state_changed = True
+
+                    curr_row += 5
+
+            # Скасовані записи
+            for slot_key, db_record in active_db_records.items():
+                if db_record['id'] not in found_ids:
+                    appt_date = datetime.strptime(db_record['date'], "%d.%m.%Y")
+                    if appt_date.date() >= now.date():
+                        supabase.table("appointments").update({"status": "cancelled"}).eq("id", db_record['id']).execute()
+                        state_changed = True
+
+            if state_changed:
+                save_state(last_seen_doctors)
+
+        except Exception as e:
+            print(f"🔥 [CRITICAL ERROR] Помилка в циклі моніторингу: {e}", flush=True)
+        
+        await asyncio.sleep(60)
+
+# --- 2. ЕЖЕДНЕВНЫЙ ОТЧЕТ АДМИНУ ---
+async def daily_scheduler(bot: Bot):
+    while True:
+        now = datetime.now() + timedelta(hours=2) # Київський час
+        target = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        
+        if now >= target:
+            target += timedelta(days=1)
+
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+
+        today = datetime.now() + timedelta(hours=2)
+        report_text = await get_schedule_report(today)
+
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
+            except: pass
+
+# --- 3. ПЛАНИРОВЩИК НАПОМИНАНИЙ ПАЦИЕНТАМ ---
+async def reminder_scheduler(bot: Bot):
+    while True:
+        try:
+            now = datetime.now() + timedelta(hours=2)
+            response = supabase.table("appointments").select("*").eq("status", "confirmed").execute()
+            rows = response.data
+
+            for row in rows:
+                user_id = row.get('user_id')
+                if not user_id or user_id == 0:
+                    continue
+
+                appt_dt = datetime.strptime(f"{row['date']} {row['time']}", "%d.%m.%Y %H:%M")
+                diff = appt_dt - now
+
+                msg_base = f"⏰ Нагадування про прийом:\n📅 Дата: {row['date']}\n🕒 Час: {row['time']}\n\nВи будете?"
+
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Так, буду", callback_data=f"rem_yes:{row['id']}"),
+                     InlineKeyboardButton(text="❌ Ні, не зможу", callback_data=f"rem_no:{row['id']}")]
+                ])
+
+                if timedelta(hours = 20) < diff <= timedelta(hours = 24) and not row['remind_day_sent']:
+                    await bot.send_message(user_id, f"Нагадування про прийом:\n{msg_base}", reply_markup=kb)
+                    supabase.table("appointments").update({"remind_day_sent": True}).eq("id", row['id']).execute()
+
+                elif now.hour == 6 and appt_dt.date() == now.date() and not row['remind_morning_sent']:
+                    await bot.send_message(user_id, f"☀️ Доброго ранку! Сьогодні чекаємо на вас.\n{msg_base}", reply_markup=kb)
+                    supabase.table("appointments").update({"remind_morning_sent": True}).eq("id", row['id']).execute()
+                
+                elif timedelta(minutes=50) < diff < timedelta(minutes=70) and not row['remind_hour_sent']:
+                    await bot.send_message(user_id, f"⚡️ Через годину ваш прийом!\n{msg_base}", reply_markup=kb)    
+                    supabase.table("appointments").update({"remind_hour_sent": True}).eq("id", row['id']).execute()
+
+        except Exception as e:
+            print(f"Помилка планувальника: {e}")
+        
+        await asyncio.sleep(600)
+
+# --- 4. МОНИТОРИНГ ЭТАПОВ ПРИЕМА ---
+async def execution_monitor(bot: Bot):
+    while True:
+        try:
+            now = datetime.now() + timedelta(hours=2)
+            today_str = now.strftime("%d.%m.%Y")
+            
+            res = supabase.table("appointments").select("*")\
+                .eq("date", today_str)\
+                .eq("doctor", "Тетерник")\
+                .eq("status", "confirmed")\
+                .neq("execution_stage", "Выполенено").execute()
+            
+            for row in res.data:
+                if row['execution_stage'] in ["Tracking_Stopped", "Выполенено"]:
+                    continue
+
+                appt_id = row['id']
+                appt_time = datetime.strptime(f"{row['date']} {row['time']}", "%d.%m.%Y %H:%M")
+                duration = get_appointment_duration(row['service'], row['anesthesia'])
+                finish_time = appt_time + timedelta(minutes=duration)
+                stop_btn = [InlineKeyboardButton(text="🔕 Зупинити відслідкування", callback_data=f"stop_track:{appt_id}")]
+
+                if now >= (appt_time - timedelta(minutes=5)) and row['execution_stage'] == "Запланировано":
+                    kb_buttons = [
+                        [InlineKeyboardButton(text="🚀 Виконується прийом", callback_data=f"set_st:Выполняется:{appt_id}")],
+                        stop_btn
+                    ]
+                    if row['anesthesia'] and "Наркоз" in row['anesthesia']:
+                        kb_buttons.insert(0, [InlineKeyboardButton(text="💉 Чи у анестезіолога", callback_data=f"set_st:У анестезиолога:{appt_id}")])
+                    
+                    for admin_id in ADMIN_IDS:
+                        settings = await get_admin_settings(admin_id)
+                        if settings.get("execution_notifications", True):
+                            try:
+                                await bot.send_message(
+                                    admin_id, 
+                                    f"🔔 <b>Час прийому! (Тетерник)</b>\n👤 Пацієнт: {row['name']}\n🕒 Початок: {row['time']}\n🩺 Послуга: {row['service']}\n\nОберіть статус:", 
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), 
+                                    parse_mode="HTML"
+                                )
+                            except: pass
+                    supabase.table("appointments").update({"execution_stage": "In_Progress_Notified"}).eq("id", appt_id).execute()
+
+                if now >= finish_time and row['execution_stage'] in ["Выполняется", "У анестезиолога", "In_Progress_Notified"]:
+                    for admin_id in ADMIN_IDS:
+                        settings = await get_admin_settings(admin_id)
+                        if settings.get("execution_notifications", True):
+                            try:
+                                kb = InlineKeyboardMarkup(inline_keyboard=[
+                                    [InlineKeyboardButton(text="✅ Відмітити виконаним", callback_data=f"set_st:Выполенено:{appt_id}")],
+                                    stop_btn
+                                ])
+                                await bot.send_message(
+                                    admin_id, 
+                                    f"🏁 <b>Час вийшов!</b>\nПотрібно відмітити виконання запису Тетерника.\n👤 Пацієнт: {row['name']}\n🕒 Початок був о: {row['time']}", 
+                                    reply_markup=kb, 
+                                    parse_mode="HTML"
+                                )
+                            except: pass 
+                    supabase.table("appointments").update({"execution_stage": "Wait_Finish_Click"}).eq("id", appt_id).execute()
+
+        except Exception as e:
+            print(f"Error in execution_monitor: {e}")
+        await asyncio.sleep(30)

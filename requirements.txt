@@ -1,0 +1,6 @@
+aiogram>=3.0.0
+supabase
+gspread
+oauth2client
+aiohttp
+python-dotenv
