@@ -39,7 +39,6 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', port).start()
 
-    # Запуск фоновых задач
     asyncio.create_task(daily_scheduler(bot))
     asyncio.create_task(monitor_and_sync_entries(bot))
     asyncio.create_task(reminder_scheduler(bot))
