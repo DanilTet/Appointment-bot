@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Импортируем настройки, сервисы и генератор клавиатур
 from config import ADMIN_IDS, REVERSE_SERVICE_MAP
@@ -189,3 +189,139 @@ async def handle_stop_tracking(callback: CallbackQuery):
     await asyncio.sleep(5)
     try: await callback.message.delete()
     except Exception as e: print(f"Не удалось удалить сообщение: {e}")
+
+@router.callback_query(F.data.startswith("rev_ok:"))
+async def admin_approve_review(callback: CallbackQuery):
+    # Дістаємо ID відгуку та ID пацієнта з кнопки
+    data_parts = callback.data.split(":")
+    review_id = data_parts[1]
+    user_id = data_parts[2]
+    
+    # Захист від подвійного натискання (перевіряємо статус у БД)
+    res = supabase.table("reviews").select("status").eq("id", review_id).execute()
+    if res.data and res.data[0]['status'] != 'pending':
+        await callback.answer("Цей відгук вже опрацьований!", show_alert=True)
+        try: await callback.message.edit_text(callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>", parse_mode="HTML", reply_markup=None)
+        except: pass
+        return
+
+    # 1. Змінюємо статус у базі на "approved"
+    supabase.table("reviews").update({"status": "approved"}).eq("id", review_id).execute()
+    
+    # 2. Автоматично відправляємо посилання пацієнту
+    google_link = "https://maps.app.goo.gl/syK8CtCDWXQAgRcx7?g_st=ic"
+    user_text = (
+        "Дякуємо за теплі слова! ❤️\n\n"
+        "Будемо дуже вдячні, якщо ви залишите цей відгук на нашій сторінці в Google Maps, щоб допомогти іншим пацієнтам знайти нас:\n\n"
+        f"👉 {google_link}"
+    )
+    
+    try:
+        await callback.message.bot.send_message(user_id, user_text)
+        google_status = "\n✅ <i>Посилання на Google Карти успішно надіслано пацієнту.</i>"
+    except Exception:
+        google_status = "\n⚠️ <i>Відгук опубліковано, але пацієнт заблокував бота (посилання не доставлено).</i>"
+    
+    # 3. Оновлюємо повідомлення у лікаря
+    admin_name = callback.from_user.full_name
+    new_text = callback.message.html_text + f"\n\n✅ <b>Опубліковано в боті.</b>\nОпрацював: <b>{admin_name}</b>{google_status}"
+    
+    await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
+    await callback.answer("Відгук опубліковано та запит надіслано!")
+
+@router.callback_query(F.data.startswith("rev_no:"))
+async def admin_reject_review(callback: CallbackQuery):
+    review_id = callback.data.split(":")[1]
+    
+    # Меняем статус в базе
+    supabase.table("reviews").update({"status": "rejected"}).eq("id", review_id).execute()
+    
+    new_text = callback.message.html_text + "\n\n❌ <i>Відгук приховано.</i>"
+    await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
+    await callback.answer("Відгук відхилено.")
+
+# --- АКТУАЛЬНЫЕ ЗАЯВКИ (INBOX АДМИНА) ---
+
+@router.callback_query(F.data == "admin_pending_menu")
+async def show_pending_menu(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    # Берем все записи со статусом pending
+    appts = supabase.table("appointments").select("id").eq("status", "pending").execute().data
+    reviews = supabase.table("reviews").select("id").eq("status", "pending").execute().data
+    
+    appts_count = len(appts) if appts else 0
+    reviews_count = len(reviews) if reviews else 0
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🗓 Записи на прийом ({appts_count})", callback_data="show_pending_appts")],
+        [InlineKeyboardButton(text=f"⭐️ Відгуки ({reviews_count})", callback_data="show_pending_reviews")]
+    ])
+    
+    await callback.message.answer(
+        f"📥 <b>Панель модерації</b>\n\n"
+        f"Нових записів на прийом: <b>{appts_count}</b>\n"
+        f"Нових відгуків: <b>{reviews_count}</b>\n\n"
+        f"<i>Оберіть, що хочете переглянути:</i>",
+        parse_mode="HTML", 
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "show_pending_appts")
+async def show_pending_appts(callback: CallbackQuery):
+    appts = supabase.table("appointments").select("*").eq("status", "pending").execute().data
+    
+    if not appts:
+        await callback.message.edit_text("✅ Немає необроблених заявок на прийом.")
+        return
+        
+    await callback.message.delete()
+    
+    # Выдаем админу каждую заявку отдельным сообщением с привычными кнопками
+    for data in appts:
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"ok:{data['id']}")],
+            [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"no:{data['id']}")]
+        ])
+
+        admin_text = (
+            f"🕒 <b>{data['time']}</b>\n"
+            f"📅 <b>{data['date']}</b>\n"
+            f"👤 Пацієнт: <b>{data['name']}</b>\n"
+            f"📞 Телефон: {data['phone']}\n"
+            f"🩺 Послуга: {data['service']}\n"
+            f"💉 Наркоз: {data['anesthesia']}\n"
+            f"👨‍⚕️ Лікар: {data['doctor']}\n"
+            f"🆔 Заявка №: {data['id']}"
+        )
+        await callback.message.bot.send_message(callback.from_user.id, admin_text, parse_mode="HTML", reply_markup=admin_kb)
+
+@router.callback_query(F.data == "show_pending_reviews")
+async def show_pending_reviews(callback: CallbackQuery):
+    reviews = supabase.table("reviews").select("*").eq("status", "pending").execute().data
+    
+    if not reviews:
+        await callback.message.edit_text("✅ Немає необроблених відгуків.")
+        return
+        
+    await callback.message.delete()
+    
+    for r in reviews:
+        stars_str = "⭐️" * r['stars']
+        admin_text = (
+            f"📝 <b>Відгук на модерацію!</b>\n"
+            f"👤 {r['user_name']}\n"
+            f"Оцінка: {stars_str}\n\n"
+            f"💬 <i>«{r['text']}»</i>\n\n"
+            f"💡 <i>Якщо ви натиснете «✅ Опублікувати», пацієнту автоматично прийде прохання залишити цей відгук на Google Картах.</i>"
+        )
+        
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опублікувати", callback_data=f"rev_ok:{r['id']}:{r['user_id']}"),
+                InlineKeyboardButton(text="❌ Відхилити", callback_data=f"rev_no:{r['id']}")
+            ]
+        ])
+        await callback.message.bot.send_message(callback.from_user.id, admin_text, parse_mode="HTML", reply_markup=admin_kb)

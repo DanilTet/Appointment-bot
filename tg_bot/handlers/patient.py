@@ -1,4 +1,5 @@
 import re
+from typing import Union
 from datetime import datetime, timedelta
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -16,7 +17,7 @@ from services.sheets import (
     get_available_dates, schedule_sheet, get_monday_str, 
     get_col_idx, is_time_allowed, clear_sheet_slot, get_next_row_idx
 )
-from tg_bot.states import Appointment
+from tg_bot.states import Appointment, Review
 
 # Создаем роутер (заменитель dp для этого файла)
 router = Router()
@@ -32,12 +33,14 @@ async def cmd_start(message: Message):
     buttons = [
         [InlineKeyboardButton(text="🗓 Записатись", callback_data="make_appointment")],
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
+        [InlineKeyboardButton(text="⭐️ Відгуки/Залишити відгук", callback_data="reviews_menu")],
         [InlineKeyboardButton(text="🏥 Лікарня", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
         [InlineKeyboardButton(text="🧐 Як знайти лікарню", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
         [InlineKeyboardButton(text="📸 Instagram", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if message.from_user.id in ADMIN_IDS:
+        buttons.append([InlineKeyboardButton(text="📥 Актуальні заявки", callback_data="admin_pending_menu")])
         buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
         buttons.append([InlineKeyboardButton(text="📊 Розклад на завтра", callback_data="admin_tomorrow")])
         buttons.append([InlineKeyboardButton(text="⚙️ Налаштування", callback_data="admin_settings")])
@@ -64,12 +67,14 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
     buttons = [
         [InlineKeyboardButton(text="🗓 Записатись", callback_data="make_appointment")],
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
+        [InlineKeyboardButton(text="⭐️ Відгуки/Залишити відгук", callback_data="reviews_menu")],
         [InlineKeyboardButton(text="🏥 Лікарня", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
         [InlineKeyboardButton(text="🧐 Як знайти лікарню", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
         [InlineKeyboardButton(text="📸 Instagram", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if callback.from_user.id in ADMIN_IDS:
+        buttons.append([InlineKeyboardButton(text="📥 Актуальні заявки", callback_data="admin_pending_menu")])
         buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
         buttons.append([InlineKeyboardButton(text="📊 Розклад на завтра", callback_data="admin_tomorrow")])
         buttons.append([InlineKeyboardButton(text="⚙️ Налаштування", callback_data="admin_settings")])
@@ -85,6 +90,136 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
     inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.answer_photo(photo=photo, caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
     await callback.answer()
+
+# ==========================================
+# --- ОБРОБКА ВІДГУКІВ (МЕНЮ + ЧИТАННЯ + ЗАПИС) ---
+# ==========================================
+
+@router.message(F.text == "⭐️ Відгуки")
+@router.callback_query(F.data == "reviews_menu")
+async def reviews_menu(event: Union[Message, CallbackQuery], state: FSMContext):
+    is_callback = isinstance(event, CallbackQuery)
+    msg = event.message if is_callback else event
+
+    if is_callback:
+        try: await msg.delete()
+        except: pass
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✍️ Залишити відгук", callback_data="leave_review")],
+        [InlineKeyboardButton(text="📖 Читати відгуки", callback_data="view_reviews")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+    ])
+    
+    await msg.answer("⭐️ <b>Відгуки пацієнтів</b>\nОберіть дію нижче:", reply_markup=kb, parse_mode="HTML")
+    if is_callback:
+        await event.answer()
+
+@router.callback_query(F.data == "view_reviews")
+async def view_reviews(callback: CallbackQuery):
+    # Достаем последние 5 одобренных отзывов из базы
+    res = supabase.table("reviews").select("*").eq("status", "approved").order("id", desc=True).limit(5).execute()
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад до відгуків", callback_data="reviews_menu")]
+    ])
+
+    if not res.data:
+        await callback.message.edit_text("Поки що немає відгуків. Будьте першим, хто його залишить! 🌟", reply_markup=kb)
+        return
+
+    text = "⭐️ <b>Останні відгуки наших пацієнтів:</b>\n\n"
+    for r in res.data:
+        stars_str = "⭐️" * r['stars']
+        text += f"👤 <b>{r['user_name']}</b>\nОцінка: {stars_str}\n💬 <i>«{r['text']}»</i>\n───────────────\n"
+
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "leave_review")
+async def ask_for_review_stars(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1 ⭐️", callback_data="rate_1"),
+            InlineKeyboardButton(text="2 ⭐️", callback_data="rate_2"),
+            InlineKeyboardButton(text="3 ⭐️", callback_data="rate_3"),
+            InlineKeyboardButton(text="4 ⭐️", callback_data="rate_4"),
+            InlineKeyboardButton(text="5 ⭐️", callback_data="rate_5")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="reviews_menu")]
+    ])
+    
+    await callback.message.edit_text("Оцініть, будь ласка, ваш візит від 1 до 5 зірок: 👇", reply_markup=kb)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("rate_"))
+async def process_star_rating(callback: CallbackQuery, state: FSMContext):
+    stars_num = int(callback.data.split("_")[1])
+    await state.update_data(stars=stars_num)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Скасувати", callback_data="reviews_menu")]
+    ])
+    
+    stars_str = "⭐️" * stars_num
+    await callback.message.edit_text(
+        f"Ви обрали оцінку: {stars_str}\n\n"
+        "Тепер напишіть, будь ласка, короткий відгук або ваші враження від візиту. "
+        "Ваша думка допомагає нам ставати кращими! 👇",
+        reply_markup=kb
+    )
+    await state.set_state(Review.text)
+    await callback.answer()
+
+@router.message(Review.text)
+async def process_review_text(message: Message, state: FSMContext):
+    review_text = message.text
+    user_name = message.from_user.first_name
+    user_id = message.from_user.id
+    username = f" (@{message.from_user.username})" if message.from_user.username else ""
+    
+    user_data = await state.get_data()
+    stars_num = user_data.get("stars", 5) 
+    stars_str = "⭐️" * stars_num
+    
+    # 1. Зберігаємо в базу даних зі статусом 'pending'
+    res = supabase.table("reviews").insert({
+        "user_id": user_id,
+        "user_name": user_name,
+        "stars": stars_num,
+        "text": review_text,
+        "status": "pending"
+    }).execute()
+    
+    review_id = res.data[0]['id']
+
+    # 2. Відправляємо адміну на модерацію (З ДОДАНОЮ ПІДКАЗКОЮ)
+    admin_text = (
+        f"📝 <b>Новий відгук на модерацію!</b>\n"
+        f"👤 {user_name}{username}\n"
+        f"Оцінка: {stars_str}\n\n"
+        f"💬 <i>«{review_text}»</i>\n\n"
+        f"💡 <i>Якщо ви натиснете «✅ Опублікувати», пацієнту автоматично прийде прохання залишити цей відгук на Google Картах.</i>"
+    )
+    
+    # Видалили окрему кнопку Google, але додали user_id у rev_ok
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опублікувати", callback_data=f"rev_ok:{review_id}:{user_id}"),
+            InlineKeyboardButton(text="❌ Відхилити", callback_data=f"rev_no:{review_id}")
+        ]
+    ])
+    
+    for admin_id in ADMIN_IDS:
+        try: await message.bot.send_message(admin_id, admin_text, parse_mode="HTML", reply_markup=admin_kb)
+        except: pass
+            
+    # 3. Хвалимо пацієнта
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ До головного меню", callback_data="back_to_main")]
+    ])
+    await message.answer("Дякуємо за ваш відгук! Ваша думка дуже важлива для нас. ❤️", reply_markup=kb)
+    await state.clear()
 
 # --- ХЕНДЛЕРЫ ОПРОСА (ЗАПИСЬ) ---
 

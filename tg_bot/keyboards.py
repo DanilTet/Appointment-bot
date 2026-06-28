@@ -9,7 +9,10 @@ from services.db import get_admin_settings
 # --- СТАТИЧНЫЕ КЛАВИАТУРЫ ---
 
 main_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="📝 Записатися на прийом")]],
+    keyboard=[
+        [KeyboardButton(text="📝 Записатися на прийом")],
+        [KeyboardButton(text="⭐️ Залишити відгук")]
+    ],
     resize_keyboard=True,
     persistent=True
 )

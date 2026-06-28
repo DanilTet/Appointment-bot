@@ -8,3 +8,7 @@ class Appointment(StatesGroup):
     date = State()       # дата
     time = State()       # час
     phone = State()      # номер телефону
+
+# --- ДЛЯ ОТЗЫВОВ ---
+class Review(StatesGroup):
+    text = State()       # Текст відгуку
