@@ -1,4 +1,5 @@
 import re
+import math
 from typing import Union
 from datetime import datetime, timedelta
 from aiogram import Router, F, types
@@ -107,7 +108,7 @@ async def reviews_menu(event: Union[Message, CallbackQuery], state: FSMContext):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✍️ Залишити відгук", callback_data="leave_review")],
-        [InlineKeyboardButton(text="📖 Читати відгуки", callback_data="view_reviews")],
+        [InlineKeyboardButton(text="📖 Читати відгуки", callback_data="view_reviews:0")], # Додали :0 для першої сторінки
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
     ])
     
@@ -115,26 +116,52 @@ async def reviews_menu(event: Union[Message, CallbackQuery], state: FSMContext):
     if is_callback:
         await event.answer()
 
-@router.callback_query(F.data == "view_reviews")
-async def view_reviews(callback: CallbackQuery):
-    # Достаем последние 5 одобренных отзывов из базы
-    res = supabase.table("reviews").select("*").eq("status", "approved").order("id", desc=True).limit(5).execute()
+# --- НОВА ФУНКЦІЯ ПАГІНАЦІЇ ---
+@router.callback_query(F.data.startswith("view_reviews"))
+async def view_reviews_page(callback: CallbackQuery):
+    # Дістаємо номер сторінки з callback_data
+    data_parts = callback.data.split(":")
+    page = int(data_parts[1]) if len(data_parts) > 1 else 0
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад до відгуків", callback_data="reviews_menu")]
-    ])
-
-    if not res.data:
+    per_page = 4 # Кількість відгуків на одну сторінку
+    offset = page * per_page
+    
+    # 1. Рахуємо загальну кількість відгуків
+    count_res = supabase.table("reviews").select("id", count="exact").eq("status", "approved").execute()
+    total_reviews = count_res.count if count_res.count else 0
+    total_pages = math.ceil(total_reviews / per_page)
+    
+    if total_reviews == 0:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="reviews_menu")]])
         await callback.message.edit_text("Поки що немає відгуків. Будьте першим, хто його залишить! 🌟", reply_markup=kb)
         return
 
-    text = "⭐️ <b>Останні відгуки наших пацієнтів:</b>\n\n"
+    # 2. Дістаємо порцію відгуків
+    res = supabase.table("reviews").select("*").eq("status", "approved").order("id", desc=True).range(offset, offset + per_page - 1).execute()
+    
+    text = f"⭐️ <b>Відгуки пацієнтів (Сторінка {page + 1} з {total_pages}):</b>\n\n"
     for r in res.data:
         stars_str = "⭐️" * r['stars']
         text += f"👤 <b>{r['user_name']}</b>\nОцінка: {stars_str}\n💬 <i>«{r['text']}»</i>\n───────────────\n"
-
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        
+    # 3. Будуємо кнопки навігації
+    navigation_buttons = []
+    
+    if page > 0:
+        navigation_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"view_reviews:{page - 1}"))
+        
+    if offset + per_page < total_reviews:
+        navigation_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"view_reviews:{page + 1}"))
+        
+    kb_list = []
+    if navigation_buttons:
+        kb_list.append(navigation_buttons)
+    kb_list.append([InlineKeyboardButton(text="⬅️ До меню відгуків", callback_data="reviews_menu")])
+    
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_list)
+    await callback.message.edit_text(text, reply_markup=inline_kb, parse_mode="HTML")
     await callback.answer()
+# ------------------------------
 
 @router.callback_query(F.data == "leave_review")
 async def ask_for_review_stars(callback: CallbackQuery, state: FSMContext):
