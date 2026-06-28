@@ -448,7 +448,8 @@ async def process_phone(message: Message, state: FSMContext):
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"ok:{appt_id}")],
-        [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"no:{appt_id}")]
+        [InlineKeyboardButton(text="❌ Відхилити (з СМС)", callback_data=f"no:{appt_id}")],
+        [InlineKeyboardButton(text="🗑 Видалити (без СМС)", callback_data=f"del_silent:{appt_id}")]
     ])
 
     admin_text = (

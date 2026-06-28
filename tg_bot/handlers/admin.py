@@ -92,6 +92,14 @@ async def admin_approve(callback: CallbackQuery):
     
     data = res.data[0]
 
+    # --- СИНХРОНІЗАЦІЯ АДМІНІВ ---
+    if data['status'] != 'pending':
+        await callback.answer("Ця заявка вже опрацьована іншим адміністратором!", show_alert=True)
+        try: await callback.message.edit_text(callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>", parse_mode="HTML", reply_markup=None)
+        except: pass
+        return
+    # -----------------------------
+
     try: 
         dt = datetime.strptime(data['date'], "%d.%m.%Y")
         ws = schedule_sheet.worksheet(get_monday_str(dt))
@@ -108,13 +116,12 @@ async def admin_approve(callback: CallbackQuery):
         if needs_double and hour < 11: # Продовження на другий слот
             next_row = get_next_row_idx(row)
             update_sheet_slots(ws, next_row, col, data)
-
-        # ТУТ РАНЬШЕ БЫЛ log_sheet.append_row() - мы его удалили!
         
         supabase.table("appointments").update({"status": "confirmed", "execution_stage": "Запланировано"}).eq("id", appt_id).execute()
         
+        admin_name = callback.from_user.full_name
         await callback.message.bot.send_message(data['user_id'], f"✅ Ваш запис на <b>{full_service}</b> підтверджено! Чекаємо на вас.", parse_mode="HTML")
-        await callback.message.edit_text(callback.message.text + f"\n\n✅ <b>ПІДТВЕРДЖЕНО: {full_service}</b>", parse_mode="HTML")
+        await callback.message.edit_text(callback.message.html_text + f"\n\n✅ <b>ПІДТВЕРДЖЕНО: {full_service}</b>\nОпрацював: <b>{admin_name}</b>", parse_mode="HTML")
         await callback.answer("Запис підтверджено!")
         
     except Exception as e:
@@ -125,16 +132,53 @@ async def admin_reject(callback: CallbackQuery):
     appt_id = callback.data.split(":")[1]
 
     res = supabase.table("appointments").select("*").eq("id", appt_id).execute()
-    if res.data:
-        data = res.data[0]
-        supabase.table("appointments").update({"status": "rejected"}).eq("id", appt_id).execute()
+    if not res.data:
+        return
         
-        try:
-            await callback.message.bot.send_message(data['user_id'], "❌ На жаль, ваш запис було відхилено. Будь ласка, оберіть інший час.")
-        except: pass
+    data = res.data[0]
 
-    await callback.message.edit_text(callback.message.text + "\n\n❌ <b>ВІДХИЛЕНО</b>", parse_mode="HTML")
+    # --- СИНХРОНІЗАЦІЯ АДМІНІВ ---
+    if data['status'] != 'pending':
+        await callback.answer("Ця заявка вже опрацьована іншим адміністратором!", show_alert=True)
+        try: await callback.message.edit_text(callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>", parse_mode="HTML", reply_markup=None)
+        except: pass
+        return
+    # -----------------------------
+        
+    supabase.table("appointments").update({"status": "rejected"}).eq("id", appt_id).execute()
+    
+    try:
+        await callback.message.bot.send_message(data['user_id'], "❌ На жаль, ваш запис було відхилено. Будь ласка, оберіть інший час.")
+    except: pass
+
+    admin_name = callback.from_user.full_name
+    await callback.message.edit_text(callback.message.html_text + f"\n\n❌ <b>ВІДХИЛЕНО (З СМС пацієнту)</b>\nОпрацював: <b>{admin_name}</b>", parse_mode="HTML")
     await callback.answer("Відхилено")
+
+@router.callback_query(F.data.startswith("del_silent:"))
+async def admin_delete_silent(callback: CallbackQuery):
+    appt_id = callback.data.split(":")[1]
+
+    res = supabase.table("appointments").select("*").eq("id", appt_id).execute()
+    if not res.data:
+        return
+        
+    data = res.data[0]
+
+    # --- СИНХРОНІЗАЦІЯ АДМІНІВ ---
+    if data['status'] != 'pending':
+        await callback.answer("Ця заявка вже опрацьована іншим адміністратором!", show_alert=True)
+        try: await callback.message.edit_text(callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>", parse_mode="HTML", reply_markup=None)
+        except: pass
+        return
+    # -----------------------------
+        
+    # Ставимо статус rejected, щоб пропало з Актуальних, але СМС не надсилаємо!
+    supabase.table("appointments").update({"status": "rejected"}).eq("id", appt_id).execute()
+
+    admin_name = callback.from_user.full_name
+    await callback.message.edit_text(callback.message.html_text + f"\n\n🗑 <b>ВИДАЛЕНО (Без сповіщення)</b>\nОпрацював: <b>{admin_name}</b>", parse_mode="HTML")
+    await callback.answer("Видалено тихо")
 
 # --- МОНИТОРИНГ ЭТАПОВ ВЫПОЛНЕНИЯ ---
 
@@ -279,11 +323,12 @@ async def show_pending_appts(callback: CallbackQuery):
         
     await callback.message.delete()
     
-    # Выдаем админу каждую заявку отдельным сообщением с привычными кнопками
+    # Выдаем админу каждую заявку с ТРЕМЯ кнопками
     for data in appts:
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"ok:{data['id']}")],
-            [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"no:{data['id']}")]
+            [InlineKeyboardButton(text="❌ Відхилити (з СМС)", callback_data=f"no:{data['id']}")],
+            [InlineKeyboardButton(text="🗑 Видалити (без СМС)", callback_data=f"del_silent:{data['id']}")]
         ])
 
         admin_text = (
