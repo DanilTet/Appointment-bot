@@ -17,6 +17,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 SCHEDULE_SHEET_ID = os.getenv("SCHEDULE_SHEET_ID")
 
+# переменная для вебхука
+REVIEW_WEBHOOK_SECRET = os.environ.get("REVIEW_WEBHOOK_SECRET", "super-secret-key-123")
 
 # мапа назв: "Повна назва для юзера": "Коротка для таблиці/логіки"
 SERVICE_MAP = {

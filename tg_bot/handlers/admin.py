@@ -236,42 +236,58 @@ async def handle_stop_tracking(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rev_ok:"))
 async def admin_approve_review(callback: CallbackQuery):
-    # Дістаємо ID відгуку та ID пацієнта з кнопки
     data_parts = callback.data.split(":")
-    review_id = data_parts[1]
-    user_id = data_parts[2]
+    review_id   = data_parts[1]
+    user_id_str = data_parts[2] if len(data_parts) > 2 else "none"
     
-    # Захист від подвійного натискання (перевіряємо статус у БД)
+    # Парсим user_id — для сайтовых отзывов будет "none"
+    user_id = None
+    if user_id_str.lower() not in ("none", "null", ""):
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            user_id = None
+            
+    # Защита от двойного нажатия
     res = supabase.table("reviews").select("status").eq("id", review_id).execute()
-    if res.data and res.data[0]['status'] != 'pending':
+    if res.data and res.data[0]["status"] != "pending":
         await callback.answer("Цей відгук вже опрацьований!", show_alert=True)
-        try: await callback.message.edit_text(callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>", parse_mode="HTML", reply_markup=None)
-        except: pass
+        try:
+            await callback.message.edit_text(
+                callback.message.html_text + "\n\n⚠️ <i>Вже опрацьовано.</i>",
+                parse_mode="HTML", reply_markup=None
+            )
+        except:
+            pass
         return
-
-    # 1. Змінюємо статус у базі на "approved"
+        
+    # Меняем статус → approved (отзыв появляется на сайте)
     supabase.table("reviews").update({"status": "approved"}).eq("id", review_id).execute()
     
-    # 2. Автоматично відправляємо посилання пацієнту
-    google_link = "https://maps.app.goo.gl/syK8CtCDWXQAgRcx7?g_st=ic"
-    user_text = (
-        "Дякуємо за теплі слова! ❤️\n\n"
-        "Будемо дуже вдячні, якщо ви залишите цей відгук на нашій сторінці в Google Maps, щоб допомогти іншим пацієнтам знайти нас:\n\n"
-        f"👉 {google_link}"
-    )
-    
-    try:
-        await callback.message.bot.send_message(user_id, user_text)
-        google_status = "\n✅ <i>Посилання на Google Карти успішно надіслано пацієнту.</i>"
-    except Exception:
-        google_status = "\n⚠️ <i>Відгук опубліковано, але пацієнт заблокував бота (посилання не доставлено).</i>"
-    
-    # 3. Оновлюємо повідомлення у лікаря
+    # Отправляем ссылку на Google только если пациент из Telegram (есть user_id)
+    if user_id:
+        google_link = "https://maps.app.goo.gl/syK8CtCDWXQAgRcx7?g_st=ic"
+        user_text = (
+            "Дякуємо за теплі слова! ❤️\n\n"
+            "Будемо дуже вдячні, якщо ви залишите цей відгук на нашій сторінці в Google Maps:\n\n"
+            f"👉 {google_link}"
+        )
+        try:
+            await callback.message.bot.send_message(user_id, user_text)
+            google_status = "\n✅ <i>Посилання на Google Карти надіслано пацієнту.</i>"
+        except Exception:
+            google_status = "\n⚠️ <i>Відгук опубліковано, але пацієнт заблокував бота.</i>"
+    else:
+        # Отзыв с сайта — нет Telegram ID, просто публикуем
+        google_status = "\n🌐 <i>Відгук з сайту — посилання на Google не надсилалось.</i>"
+        
     admin_name = callback.from_user.full_name
-    new_text = callback.message.html_text + f"\n\n✅ <b>Опубліковано в боті.</b>\nОпрацював: <b>{admin_name}</b>{google_status}"
-    
+    new_text = (
+        callback.message.html_text
+        + f"\n\n✅ <b>Опубліковано на сайті.</b>\nОпрацював: <b>{admin_name}</b>{google_status}"
+    )
     await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
-    await callback.answer("Відгук опубліковано та запит надіслано!")
+    await callback.answer("Відгук опубліковано!")
 
 @router.callback_query(F.data.startswith("rev_no:"))
 async def admin_reject_review(callback: CallbackQuery):
