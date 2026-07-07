@@ -15,8 +15,44 @@ from services.sheets import (
     get_schedule_report
 )
 
+import re
+
 force_sync_event = asyncio.Event()
 pending_sync_dates = []
+
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Парсинг пациента ---
+def parse_patient_data(raw_text):
+    """
+    Извлекает номер телефона из строки пациента и возвращает (имя, телефон).
+    Поддерживает украинские форматы: 050..., +380..., 380... с любыми разделителями.
+    """
+    if not raw_text:
+        return "", None
+        
+    # Ищем последовательность, которая похожа на укр. номер: опциональный +38, опциональные скобки/дефисы, затем 0 и еще минимум 8 цифр
+    pattern = r'[\s\(\[-]*?(?:\+?38)?[\s\-\(]*0[\d\s\-\(\)]{8,}\d[\s\)\]]*'
+    matches = re.finditer(pattern, raw_text)
+    
+    for match in matches:
+        extracted = match.group(0)
+        digits_only = re.sub(r'[^\d]', '', extracted)
+        
+        # Украинские номера: 10 цифр (050...) или 12 цифр (38050...)
+        if len(digits_only) in (10, 12):
+            clean_phone = re.sub(r'[^\d\+]', '', extracted)
+            
+            # Удаляем номер из исходной строки
+            clean_name = raw_text.replace(extracted, ' ')
+            
+            # Убираем двойные пробелы
+            clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+            
+            # Подчищаем висячие символы по краям
+            clean_name = clean_name.strip(',.-()[] ')
+            
+            return clean_name, clean_phone
+            
+    return raw_text.strip(), None
 
 
 # --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Дедупликация ---
@@ -133,7 +169,9 @@ async def monitor_and_sync_entries(bot: Bot):
                         curr_row += 5
                         continue
 
-                    patient_info = data[curr_row + 1][col_idx].strip()
+                    raw_patient_info = data[curr_row + 1][col_idx].strip()
+                    patient_info, parsed_phone = parse_patient_data(raw_patient_info)
+                    
                     time_val = data[curr_row][col_idx - 1].strip()
                     sheet_stage = data[curr_row + 4][col_idx].strip()
                     row_idx_str = str(curr_row + 1)
@@ -141,11 +179,6 @@ async def monitor_and_sync_entries(bot: Bot):
                     # КРИТИЧНО: doctor_name читаем из ячейки ВРАЧА (row+2), а НЕ пациента.
                     # "Данило" — это врач, не пациент. Не перепутать!
                     doctor_name = data[curr_row + 2][col_idx].strip() or "Не вказано"
-
-                    # КРИТИЧНО: patient_info (row+1) может содержать номер телефона,
-                    # дописанный вручную прямо в ячейку с ФИО. Мы храним его как есть —
-                    # не парсим и не разделяем. Телефон в БД пишется ТОЛЬКО если пациент
-                    # сам записался через бота (тогда phone != "Ручний запис").
                     
                     slot_key = (date_str, row_idx_str)
 
@@ -195,7 +228,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                         "service": data[curr_row][col_idx].strip(),
                                         "anesthesia": data[curr_row + 3][col_idx].strip(),
                                         "doctor": doctor_name,
-                                        "phone": "Ручний запис",
+                                        "phone": parsed_phone if parsed_phone else "Ручний запис",
                                         "date": date_str,
                                         "time": time_val,
                                         "row_idx": int(row_idx_str),
@@ -342,7 +375,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                         "service": data[curr_row][col_idx].strip(),
                                         "anesthesia": data[curr_row + 3][col_idx].strip(),
                                         "doctor": doctor_name,
-                                        "phone": "Ручний запис",
+                                        "phone": parsed_phone if parsed_phone else "Ручний запис",
                                         "date": date_str,
                                         "time": time_val,
                                         "row_idx": int(row_idx_str),
