@@ -14,6 +14,30 @@ from services.sheets import (
     get_schedule_report
 )
 
+
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Дедупликация ---
+def _record_already_exists(date_str: str, row_idx_str: str) -> bool:
+    """
+    Проверяет, существует ли в БД хотя бы одна запись с данной датой и row_idx.
+    Возвращает True, если дубликат уже есть — INSERT нужно пропустить.
+    Это КРИТИЧЕСКАЯ защита: без неё бот плодит тысячи копий одной записи.
+    """
+    try:
+        res = (
+            supabase.table("appointments")
+            .select("id")
+            .eq("date", date_str)
+            .eq("row_idx", row_idx_str)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as e:
+        # При ошибке SELECT — безопасно пропускаем INSERT, чтобы не плодить дубли
+        print(f"⚠️ [DEDUP] Ошибка проверки дубликата ({date_str}, row {row_idx_str}): {e}", flush=True)
+        return True
+
+
 # --- 1. МОНИТОРИНГ И СИНХРОНИЗАЦИЯ ---
 async def monitor_and_sync_entries(bot: Bot):
     print("🤖 [SYSTEM] Запуск повного циклу моніторингу...", flush=True)
@@ -24,9 +48,19 @@ async def monitor_and_sync_entries(bot: Bot):
             state_changed = False
             cached_sheets_data = {}
             
-            # Отримуємо активні записи з бази (confirmed/pending)
+            # Получаем активные записи из БД (confirmed/pending).
+            # Словарь строится по (date, row_idx) — уникальному ключу слота.
+            # ВАЖНО: для записей Данило в БД может быть несколько строк с одним
+            # ключом (исторические дубли). Мы берём только ПЕРВУЮ — для проверки
+            # наличия. Синхронизацию статусов для Данило не делаем в любом случае.
             db_res = supabase.table("appointments").select("*").filter("status", "in", '("confirmed", "pending")').execute()
-            active_db_records = {(r['date'], str(r['row_idx'])): r for r in db_res.data}
+
+            active_db_records = {}
+            for r in db_res.data:
+                key = (r['date'], str(r['row_idx']))
+                if key not in active_db_records:
+                    active_db_records[key] = r
+
             found_ids = set()
 
             try:
@@ -74,25 +108,39 @@ async def monitor_and_sync_entries(bot: Bot):
                     time_val = data[curr_row][col_idx - 1].strip()
                     sheet_stage = data[curr_row + 4][col_idx].strip()
                     row_idx_str = str(curr_row + 1)
-                    
-                    # Получаем имя врача для проверки бага!
+
+                    # КРИТИЧНО: doctor_name читаем из ячейки ВРАЧА (row+2), а НЕ пациента.
+                    # "Данило" — это врач, не пациент. Не перепутать!
                     doctor_name = data[curr_row + 2][col_idx].strip() or "Не вказано"
+
+                    # КРИТИЧНО: patient_info (row+1) может содержать номер телефона,
+                    # дописанный вручную прямо в ячейку с ФИО. Мы храним его как есть —
+                    # не парсим и не разделяем. Телефон в БД пишется ТОЛЬКО если пациент
+                    # сам записался через бота (тогда phone != "Ручний запис").
                     
                     slot_key = (date_str, row_idx_str)
 
                     if patient_info:
-                        # --- 🎯 БАГ ИСПРАВЛЕН: Теперь ищем Данило в переменной врача, а не пациента ---
-                        if "данило" in doctor_name.lower():
+                        is_danilo = "данило" in doctor_name.lower()
+
+                        # ================================================================
+                        # ВЕТКА А: Врач — ДАНИЛО
+                        # Действия: ТОЛЬКО уведомление о новой записи + один INSERT.
+                        # Синхронизация статусов — ПОЛНОСТЬЮ ЗАПРЕЩЕНА.
+                        # ================================================================
+                        if is_danilo:
                             danilo_alert_key = f"dan_alert_{date_str}_{row_idx_str}_{patient_info}"
                             
                             if last_seen_doctors.get(danilo_alert_key) != "sent":
                                 print(f"🎯 [HIT] Знайдено запис до Данила: {patient_info} на {date_str}", flush=True)
+                                
                                 for admin_id in ADMIN_IDS:
                                     try:
                                         try:
                                             settings = await get_admin_settings(admin_id)
                                             is_enabled = settings.get("track_danilo", True)
-                                        except: is_enabled = True
+                                        except:
+                                            is_enabled = True
 
                                         if is_enabled:
                                             alert_msg = (
@@ -104,54 +152,146 @@ async def monitor_and_sync_entries(bot: Bot):
                                             )
                                             await bot.send_message(admin_id, alert_msg, parse_mode="HTML")
                                     except Exception as e:
-                                        print(f"❌ Помилка відправки Telegram: {e}", flush=True)
-                                
+                                        print(f"❌ Помилка відправки Telegram (Данило): {e}", flush=True)
+
+                                # --- ДЕДУПЛИКАЦИЯ: INSERT только если записи ещё нет ---
+                                # Проверяем по (date, row_idx) — не по alert_key!
+                                # Это защищает от накопления тысяч дублей при рестарте бота.
+                                if slot_key not in active_db_records and not _record_already_exists(date_str, row_idx_str):
+                                    new_appt = {
+                                        "user_id": 0,
+                                        "name": patient_info,
+                                        "service": data[curr_row][col_idx].strip(),
+                                        "anesthesia": data[curr_row + 3][col_idx].strip(),
+                                        "doctor": doctor_name,
+                                        "phone": "Ручний запис",
+                                        "date": date_str,
+                                        "time": time_val,
+                                        "row_idx": row_idx_str,
+                                        "status": "confirmed",
+                                        "execution_stage": "Запланировано",
+                                    }
+                                    res = supabase.table("appointments").insert(new_appt).execute()
+                                    if res.data:
+                                        inserted_id = res.data[0]['id']
+                                        found_ids.add(inserted_id)
+                                        active_db_records[slot_key] = res.data[0]
+                                        print(f"✅ [DANILO INSERT] Запис додано: id={inserted_id}, {date_str} {time_val}", flush=True)
+                                    state_changed = True
+                                elif slot_key in active_db_records:
+                                    found_ids.add(active_db_records[slot_key]['id'])
+                                else:
+                                    print(f"⏭️ [DANILO SKIP] Дубль проігноровано: {date_str}, row={row_idx_str}", flush=True)
+                                    try:
+                                        exist_res = (
+                                            supabase.table("appointments")
+                                            .select("id")
+                                            .eq("date", date_str)
+                                            .eq("row_idx", row_idx_str)
+                                            .limit(1)
+                                            .execute()
+                                        )
+                                        if exist_res.data:
+                                            found_ids.add(exist_res.data[0]['id'])
+                                    except Exception:
+                                        pass
+
                                 last_seen_doctors[danilo_alert_key] = "sent"
                                 state_changed = True
+                            else:
+                                # Уведомление уже было отправлено ранее.
+                                # Просто отмечаем слот как найденный, чтобы не помечать его cancelled.
+                                if slot_key in active_db_records:
+                                    found_ids.add(active_db_records[slot_key]['id'])
+                                else:
+                                    try:
+                                        exist_res = (
+                                            supabase.table("appointments")
+                                            .select("id")
+                                            .eq("date", date_str)
+                                            .eq("row_idx", row_idx_str)
+                                            .limit(1)
+                                            .execute()
+                                        )
+                                        if exist_res.data:
+                                            found_ids.add(exist_res.data[0]['id'])
+                                    except Exception:
+                                        pass
 
-                        # --- 🔄 СИНХРОНІЗАЦІЯ ---
-                        if slot_key in active_db_records:
-                            rec = active_db_records[slot_key]
-                            found_ids.add(rec['id'])
-                            
-                            db_stage = rec.get('execution_stage', '')
-                            if sheet_stage and sheet_stage != db_stage:
-                                should_sync = True
-                                if db_stage == "In_Progress_Notified" and sheet_stage == "Запланировано": should_sync = False
-                                elif db_stage == "Wait_Finish_Click" and sheet_stage != "Выполенено": should_sync = False
-
-                                if should_sync:
-                                    supabase.table("appointments").update({"execution_stage": sheet_stage}).eq("id", rec['id']).execute()
-                                    active_db_records[slot_key]['execution_stage'] = sheet_stage
-                                    
-                                    for admin_id in ADMIN_IDS:
-                                        try:
-                                            settings = await get_admin_settings(admin_id)
-                                            if settings.get("sync_notifications", True):
-                                                sync_msg = (
-                                                    f"🔄 <b>Синхронізація з таблицею</b>\n\n"
-                                                    f"Пацієнт: {patient_info}\nЧас: {time_val}\n"
-                                                    f"Статус змінено на: <b>{sheet_stage}</b>"
-                                                )
-                                                await bot.send_message(admin_id, sync_msg, parse_mode="HTML")
-                                        except: pass
+                        # ================================================================
+                        # ВЕТКА Б: Врач — ТЕТЕРНИК (или любой другой, кроме Данило)
+                        # Действия: полный цикл — INSERT новых + синхронизация статусов.
+                        # ================================================================
                         else:
-                            # Новий ручний запис
-                            new_appt = {
-                                "user_id": 0, "name": patient_info, 
-                                "service": data[curr_row][col_idx].strip(),
-                                "anesthesia": data[curr_row + 3][col_idx].strip(), 
-                                "doctor": doctor_name, "phone": "Ручний запис",
-                                "date": date_str, "time": time_val, "row_idx": row_idx_str,
-                                "status": "confirmed", "execution_stage": sheet_stage if sheet_stage else "Запланировано"
-                            }
-                            res = supabase.table("appointments").insert(new_appt).execute()
-                            if res.data: found_ids.add(res.data[0]['id'])
-                            state_changed = True
+                            if slot_key in active_db_records:
+                                rec = active_db_records[slot_key]
+                                found_ids.add(rec['id'])
+                                
+                                db_stage = rec.get('execution_stage', '')
+                                if sheet_stage and sheet_stage != db_stage:
+                                    should_sync = True
+                                    if db_stage == "In_Progress_Notified" and sheet_stage == "Запланировано":
+                                        should_sync = False
+                                    elif db_stage == "Wait_Finish_Click" and sheet_stage != "Выполенено":
+                                        should_sync = False
+
+                                    if should_sync:
+                                        supabase.table("appointments").update({"execution_stage": sheet_stage}).eq("id", rec['id']).execute()
+                                        active_db_records[slot_key]['execution_stage'] = sheet_stage
+                                        
+                                        for admin_id in ADMIN_IDS:
+                                            try:
+                                                settings = await get_admin_settings(admin_id)
+                                                if settings.get("sync_notifications", True):
+                                                    sync_msg = (
+                                                        f"🔄 <b>Синхронізація з таблицею</b>\n\n"
+                                                        f"Пацієнт: {patient_info}\nЧас: {time_val}\n"
+                                                        f"Статус змінено на: <b>{sheet_stage}</b>"
+                                                    )
+                                                    await bot.send_message(admin_id, sync_msg, parse_mode="HTML")
+                                            except:
+                                                pass
+                            else:
+                                # Новий ручний запис — ДЕДУПЛИКАЦИЯ перед INSERT
+                                if not _record_already_exists(date_str, row_idx_str):
+                                    new_appt = {
+                                        "user_id": 0,
+                                        "name": patient_info,
+                                        "service": data[curr_row][col_idx].strip(),
+                                        "anesthesia": data[curr_row + 3][col_idx].strip(),
+                                        "doctor": doctor_name,
+                                        "phone": "Ручний запис",
+                                        "date": date_str,
+                                        "time": time_val,
+                                        "row_idx": row_idx_str,
+                                        "status": "confirmed",
+                                        "execution_stage": sheet_stage if sheet_stage else "Запланировано",
+                                    }
+                                    res = supabase.table("appointments").insert(new_appt).execute()
+                                    if res.data:
+                                        inserted_id = res.data[0]['id']
+                                        found_ids.add(inserted_id)
+                                        active_db_records[slot_key] = res.data[0]
+                                    state_changed = True
+                                else:
+                                    print(f"⏭️ [TETERNIK SKIP] Дубль проігноровано: {date_str}, row={row_idx_str}", flush=True)
+                                    try:
+                                        exist_res = (
+                                            supabase.table("appointments")
+                                            .select("id")
+                                            .eq("date", date_str)
+                                            .eq("row_idx", row_idx_str)
+                                            .limit(1)
+                                            .execute()
+                                        )
+                                        if exist_res.data:
+                                            found_ids.add(exist_res.data[0]['id'])
+                                    except Exception:
+                                        pass
 
                     curr_row += 5
 
-            # Скасовані записи
+            # Скасовані записи — отменяем только будущие, не прошлые
             for slot_key, db_record in active_db_records.items():
                 if db_record['id'] not in found_ids:
                     appt_date = datetime.strptime(db_record['date'], "%d.%m.%Y")
@@ -170,7 +310,7 @@ async def monitor_and_sync_entries(bot: Bot):
 # --- 2. ЕЖЕДНЕВНЫЙ ОТЧЕТ АДМИНУ ---
 async def daily_scheduler(bot: Bot):
     while True:
-        now = datetime.now() + timedelta(hours=2) # Київський час
+        now = datetime.now() + timedelta(hours=2)
         target = now.replace(hour=6, minute=0, second=0, microsecond=0)
         
         if now >= target:
@@ -210,7 +350,7 @@ async def reminder_scheduler(bot: Bot):
                      InlineKeyboardButton(text="❌ Ні, не зможу", callback_data=f"rem_no:{row['id']}")]
                 ])
 
-                if timedelta(hours = 20) < diff <= timedelta(hours = 24) and not row['remind_day_sent']:
+                if timedelta(hours=20) < diff <= timedelta(hours=24) and not row['remind_day_sent']:
                     await bot.send_message(user_id, f"Нагадування про прийом:\n{msg_base}", reply_markup=kb)
                     supabase.table("appointments").update({"remind_day_sent": True}).eq("id", row['id']).execute()
 
@@ -227,13 +367,14 @@ async def reminder_scheduler(bot: Bot):
         
         await asyncio.sleep(600)
 
-# --- 4. МОНИТОРИНГ ЭТАПОВ ПРИЕМА ---
+# --- 4. МОНИТОРИНГ ЭТАПОВ ПРИЕМА (только Тетерник) ---
 async def execution_monitor(bot: Bot):
     while True:
         try:
             now = datetime.now() + timedelta(hours=2)
             today_str = now.strftime("%d.%m.%Y")
             
+            # Запрос строго по врачу "Тетерник" — Данило сюда не попадает никогда
             res = supabase.table("appointments").select("*")\
                 .eq("date", today_str)\
                 .eq("doctor", "Тетерник")\
