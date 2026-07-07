@@ -98,7 +98,7 @@ async def monitor_and_sync_entries(bot: Bot):
                 continue
 
             for day_offset in range(7):
-                target_date = now + timedelta(days=day_offset)
+                target_date = monday_of_week + timedelta(days=day_offset)
                 if target_date.weekday() == 6: continue 
                 
                 date_str = target_date.strftime("%d.%m.%Y")
