@@ -105,18 +105,19 @@ async def monitor_and_sync_entries(bot: Bot):
                 date_str = target_date.strftime("%d.%m.%Y")
                 sheet_name = get_monday_str(target_date) 
 
-                if sheet_name not in available_sheets:
+                matching_sheet = next((s for s in available_sheets if s.strip() == sheet_name), None)
+                if not matching_sheet:
                     continue 
 
-                if sheet_name not in cached_sheets_data:
+                if matching_sheet not in cached_sheets_data:
                     try:
-                        ws = schedule_sheet.worksheet(sheet_name)
-                        cached_sheets_data[sheet_name] = ws.get_all_values()
+                        ws = schedule_sheet.worksheet(matching_sheet)
+                        cached_sheets_data[matching_sheet] = ws.get_all_values()
                     except Exception as e:
-                        print(f"⚠️ [SHEETS ERROR] Помилка читання листа {sheet_name}: {e}", flush=True)
+                        print(f"⚠️ [SHEETS ERROR] Помилка читання листа {matching_sheet}: {e}", flush=True)
                         continue
                 
-                data = cached_sheets_data[sheet_name]
+                data = cached_sheets_data[matching_sheet]
                 col_idx = get_col_idx(target_date) - 1
                 curr_row = 4
                 slots_to_skip = 0
