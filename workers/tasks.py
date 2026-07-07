@@ -259,17 +259,31 @@ async def monitor_and_sync_entries(bot: Bot):
                                 found_ids.add(rec['id'])
                                 
                                 db_stage = rec.get('execution_stage', '')
+                                db_doctor = rec.get('doctor', '')
+                                
+                                sync_data = {}
+                                
                                 if sheet_stage and sheet_stage != db_stage:
-                                    should_sync = True
+                                    should_sync_stage = True
                                     if db_stage == "In_Progress_Notified" and sheet_stage == "Запланировано":
-                                        should_sync = False
+                                        should_sync_stage = False
                                     elif db_stage == "Wait_Finish_Click" and sheet_stage != "Выполенено":
-                                        should_sync = False
-
-                                    if should_sync:
-                                        supabase.table("appointments").update({"execution_stage": sheet_stage}).eq("id", rec['id']).execute()
+                                        should_sync_stage = False
+                                    
+                                    if should_sync_stage:
+                                        sync_data["execution_stage"] = sheet_stage
                                         active_db_records[slot_key]['execution_stage'] = sheet_stage
                                         
+                                if doctor_name and doctor_name != "Не вказано" and doctor_name != db_doctor:
+                                    sync_data["doctor"] = doctor_name
+                                    active_db_records[slot_key]['doctor'] = doctor_name
+                                    
+                                if sync_data:
+                                    supabase.table("appointments").update(sync_data).eq("id", rec['id']).execute()
+                                    
+                                    # If only doctor changed, we don't necessarily need to spam notifications, 
+                                    # but we process the stage notification if stage was updated
+                                    if "execution_stage" in sync_data:
                                         for admin_id in ADMIN_IDS:
                                             try:
                                                 settings = await get_admin_settings(admin_id)
