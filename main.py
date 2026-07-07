@@ -13,7 +13,8 @@ from workers.tasks import (
     daily_scheduler,
     monitor_and_sync_entries,
     reminder_scheduler,
-    execution_monitor
+    execution_monitor,
+    force_sync_event
 )
 
 bot = Bot(token=TOKEN)
@@ -30,6 +31,17 @@ async def handle(request):
         return web.Response(text=content, content_type='text/html')
     else:
         return web.Response(text="Файл index.html не знайдено!", status=404)
+
+async def handle_trigger_sync(request):
+    """
+    Примусово запускає синхронізацію Гугл Таблиць з БД.
+    """
+    secret = request.query.get("secret", "")
+    if secret != REVIEW_WEBHOOK_SECRET:
+        return web.Response(status=403, text="Forbidden")
+        
+    force_sync_event.set()
+    return web.json_response({"status": "ok", "message": "Синхронізація активована"})
 
 async def handle_new_review_webhook(request):
     """
@@ -104,6 +116,7 @@ async def main():
     
     app = web.Application()
     app.router.add_get("/", handle)
+    app.router.add_get("/api/trigger-sync", handle_trigger_sync)
     app.router.add_post("/webhook/new-review", handle_new_review_webhook)  # ← НОВЫЙ МАРШРУТ
     app.router.add_static('/photos/', path=Path(__file__).parent / 'photos', name='photos')
 

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
+# pyrefly: ignore [missing-import]
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -13,6 +14,8 @@ from services.sheets import (
     get_appointment_duration, 
     get_schedule_report
 )
+
+force_sync_event = asyncio.Event()
 
 
 # --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Дедупликация ---
@@ -319,7 +322,12 @@ async def monitor_and_sync_entries(bot: Bot):
         except Exception as e:
             print(f"🔥 [CRITICAL ERROR] Помилка в циклі моніторингу: {e}", flush=True)
         
-        await asyncio.sleep(60)
+        try:
+            await asyncio.wait_for(force_sync_event.wait(), timeout=60.0)
+            force_sync_event.clear()
+            print("🔔 [SYSTEM] Отримано сигнал примусової синхронізації!", flush=True)
+        except asyncio.TimeoutError:
+            pass
 
 # --- 2. ЕЖЕДНЕВНЫЙ ОТЧЕТ АДМИНУ ---
 async def daily_scheduler(bot: Bot):
