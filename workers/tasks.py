@@ -210,7 +210,26 @@ async def monitor_and_sync_entries(bot: Bot):
                                         print(f"✅ [{doc_identifier} INSERT] Запис додано: id={inserted_id}, {date_str} {time_val}", flush=True)
                                     state_changed = True
                                 elif slot_key in active_db_records:
-                                    found_ids.add(active_db_records[slot_key]['id'])
+                                    rec = active_db_records[slot_key]
+                                    found_ids.add(rec['id'])
+                                    
+                                    db_doctor = rec.get('doctor', '')
+                                    db_stage = rec.get('execution_stage', '')
+                                    sync_data = {}
+                                    
+                                    if doctor_name and doctor_name != "Не вказано" and doctor_name != db_doctor:
+                                        sync_data["doctor"] = doctor_name
+                                    if sheet_stage and sheet_stage != db_stage:
+                                        sync_data["execution_stage"] = sheet_stage
+                                        
+                                    if sync_data:
+                                        supabase.table("appointments").update(sync_data).eq("id", rec['id']).execute()
+                                        if "doctor" in sync_data:
+                                            active_db_records[slot_key]['doctor'] = sync_data["doctor"]
+                                        if "execution_stage" in sync_data:
+                                            active_db_records[slot_key]['execution_stage'] = sync_data["execution_stage"]
+                                        state_changed = True
+                                        print(f"🔄 Оновлено Данило/Калашніков {rec['id']}: {sync_data}", flush=True)
                                 else:
                                     print(f"⏭️ [{doc_identifier} SKIP] Дубль проігноровано: {date_str}, row={row_idx_str}", flush=True)
                                     try:
@@ -231,9 +250,27 @@ async def monitor_and_sync_entries(bot: Bot):
                                 state_changed = True
                             else:
                                 # Уведомление уже было отправлено ранее.
-                                # Просто отмечаем слот как найденный, чтобы не помечать его cancelled.
                                 if slot_key in active_db_records:
-                                    found_ids.add(active_db_records[slot_key]['id'])
+                                    rec = active_db_records[slot_key]
+                                    found_ids.add(rec['id'])
+                                    
+                                    db_doctor = rec.get('doctor', '')
+                                    db_stage = rec.get('execution_stage', '')
+                                    sync_data = {}
+                                    
+                                    if doctor_name and doctor_name != "Не вказано" and doctor_name != db_doctor:
+                                        sync_data["doctor"] = doctor_name
+                                    if sheet_stage and sheet_stage != db_stage:
+                                        sync_data["execution_stage"] = sheet_stage
+                                        
+                                    if sync_data:
+                                        supabase.table("appointments").update(sync_data).eq("id", rec['id']).execute()
+                                        if "doctor" in sync_data:
+                                            active_db_records[slot_key]['doctor'] = sync_data["doctor"]
+                                        if "execution_stage" in sync_data:
+                                            active_db_records[slot_key]['execution_stage'] = sync_data["execution_stage"]
+                                        state_changed = True
+                                        print(f"🔄 Оновлено Данило/Калашніков {rec['id']}: {sync_data}", flush=True)
                                 else:
                                     try:
                                         exist_res = (
