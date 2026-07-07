@@ -16,6 +16,7 @@ from services.sheets import (
 )
 
 force_sync_event = asyncio.Event()
+pending_sync_dates = []
 
 
 # --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Дедупликация ---
@@ -50,14 +51,25 @@ async def monitor_and_sync_entries(bot: Bot):
     
     while True:
         try:
-            now = datetime.now() + timedelta(hours=2)
+            if pending_sync_dates:
+                target_str = pending_sync_dates.pop(0)
+                try:
+                    now = datetime.strptime(target_str, "%d.%m.%Y")
+                    print(f"📅 [SYSTEM] Отримано запит на синхронізацію конкретного тижня для дати: {target_str}", flush=True)
+                except Exception as e:
+                    print(f"⚠️ [SYSTEM] Помилка парсингу дати {target_str}: {e}", flush=True)
+                    now = datetime.now() + timedelta(hours=2)
+            else:
+                now = datetime.now() + timedelta(hours=2)
+                
             state_changed = False
             cached_sheets_data = {}
             
-            # Собираем список дат, которые мы будем сканировать на этой итерации (ближайшие 7 дней)
+            # Находим понедельник целевой недели
+            monday_of_week = now - timedelta(days=now.weekday())
             scan_dates = []
             for day_offset in range(7):
-                target_date = now + timedelta(days=day_offset)
+                target_date = monday_of_week + timedelta(days=day_offset)
                 if target_date.weekday() == 6: continue 
                 scan_dates.append(target_date.strftime("%d.%m.%Y"))
 

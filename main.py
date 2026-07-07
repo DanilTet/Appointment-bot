@@ -14,7 +14,8 @@ from workers.tasks import (
     monitor_and_sync_entries,
     reminder_scheduler,
     execution_monitor,
-    force_sync_event
+    force_sync_event,
+    pending_sync_dates
 )
 
 bot = Bot(token=TOKEN)
@@ -40,9 +41,13 @@ async def handle_trigger_sync(request):
     if secret != REVIEW_WEBHOOK_SECRET:
         return web.Response(status=403, text="Forbidden", headers={"Access-Control-Allow-Origin": "*"})
         
+    target_date = request.query.get("date", "").strip()
+    if target_date:
+        pending_sync_dates.append(target_date)
+        
     force_sync_event.set()
     return web.json_response(
-        {"status": "ok", "message": "Синхронізація активована"},
+        {"status": "ok", "message": f"Синхронізація активована для {target_date if target_date else 'поточного тижня'}"},
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
