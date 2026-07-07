@@ -92,6 +92,7 @@ async def monitor_and_sync_entries(bot: Bot):
 
             try:
                 available_sheets = [s.title for s in schedule_sheet.worksheets()]
+                print(f"📋 Доступні листи в Excel: {available_sheets}", flush=True)
             except Exception as e:
                 print(f"❌ [DATABASE ERROR] Не вдалося отримати список листів: {e}", flush=True)
                 await asyncio.sleep(60)
