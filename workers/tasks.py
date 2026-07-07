@@ -23,11 +23,14 @@ def _record_already_exists(date_str: str, row_idx_str: str) -> bool:
     Это КРИТИЧЕСКАЯ защита: без неё бот плодит тысячи копий одной записи.
     """
     try:
+        # row_idx в базе данных Supabase имеет тип integer (число).
+        # Обязательно преобразуем к int для корректного поиска.
+        row_idx_val = int(row_idx_str)
         res = (
             supabase.table("appointments")
             .select("id")
             .eq("date", date_str)
-            .eq("row_idx", row_idx_str)
+            .eq("row_idx", row_idx_val)
             .limit(1)
             .execute()
         )
@@ -48,12 +51,21 @@ async def monitor_and_sync_entries(bot: Bot):
             state_changed = False
             cached_sheets_data = {}
             
-            # Получаем активные записи из БД (confirmed/pending).
-            # Словарь строится по (date, row_idx) — уникальному ключу слота.
-            # ВАЖНО: для записей Данило в БД может быть несколько строк с одним
-            # ключом (исторические дубли). Мы берём только ПЕРВУЮ — для проверки
-            # наличия. Синхронизацию статусов для Данило не делаем в любом случае.
-            db_res = supabase.table("appointments").select("*").filter("status", "in", '("confirmed", "pending")').execute()
+            # Собираем список дат, которые мы будем сканировать на этой итерации (ближайшие 7 дней)
+            scan_dates = []
+            for day_offset in range(7):
+                target_date = now + timedelta(days=day_offset)
+                if target_date.weekday() == 6: continue 
+                scan_dates.append(target_date.strftime("%d.%m.%Y"))
+
+            # Запрашиваем из БД записи ТОЛЬКО за сканируемые даты (чтобы не упираться в лимит 1000 строк)
+            db_res = (
+                supabase.table("appointments")
+                .select("*")
+                .filter("status", "in", '("confirmed", "pending")')
+                .in_("date", scan_dates)
+                .execute()
+            )
 
             active_db_records = {}
             for r in db_res.data:
@@ -122,17 +134,19 @@ async def monitor_and_sync_entries(bot: Bot):
 
                     if patient_info:
                         is_danilo = "данило" in doctor_name.lower()
+                        is_kalashnikov = "калашников" in doctor_name.lower()
 
                         # ================================================================
-                        # ВЕТКА А: Врач — ДАНИЛО
+                        # ВЕТКА А: Врачи — ДАНИЛО или КАЛАШНИКОВ
                         # Действия: ТОЛЬКО уведомление о новой записи + один INSERT.
                         # Синхронизация статусов — ПОЛНОСТЬЮ ЗАПРЕЩЕНА.
                         # ================================================================
-                        if is_danilo:
-                            danilo_alert_key = f"dan_alert_{date_str}_{row_idx_str}_{patient_info}"
+                        if is_danilo or is_kalashnikov:
+                            doc_identifier = "ДАНИЛО" if is_danilo else "КАЛАШНИКОВ"
+                            alert_key = f"alert_{doc_identifier}_{date_str}_{row_idx_str}_{patient_info}"
                             
-                            if last_seen_doctors.get(danilo_alert_key) != "sent":
-                                print(f"🎯 [HIT] Знайдено запис до Данила: {patient_info} на {date_str}", flush=True)
+                            if last_seen_doctors.get(alert_key) != "sent":
+                                print(f"🎯 [HIT] Знайдено запис до {doc_identifier}: {patient_info} на {date_str}", flush=True)
                                 
                                 for admin_id in ADMIN_IDS:
                                     try:
@@ -144,7 +158,7 @@ async def monitor_and_sync_entries(bot: Bot):
 
                                         if is_enabled:
                                             alert_msg = (
-                                                f"‼️‼️‼️ <b>НОВИЙ ЗАПИС: ДАНИЛО</b> ‼️‼️‼️\n\n"
+                                                f"‼️‼️‼️ <b>НОВИЙ ЗАПИС: {doc_identifier}</b> ‼️‼️‼️\n\n"
                                                 f"📅 Дата: <b>{date_str}</b>\n"
                                                 f"🕒 Час: <b>{time_val}</b>\n"
                                                 f"📝 Пацієнт: <code>{patient_info}</code>\n"
@@ -152,7 +166,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                             )
                                             await bot.send_message(admin_id, alert_msg, parse_mode="HTML")
                                     except Exception as e:
-                                        print(f"❌ Помилка відправки Telegram (Данило): {e}", flush=True)
+                                        print(f"❌ Помилка відправки Telegram ({doc_identifier}): {e}", flush=True)
 
                                 # --- ДЕДУПЛИКАЦИЯ: INSERT только если записи ещё нет ---
                                 # Проверяем по (date, row_idx) — не по alert_key!
@@ -167,7 +181,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                         "phone": "Ручний запис",
                                         "date": date_str,
                                         "time": time_val,
-                                        "row_idx": row_idx_str,
+                                        "row_idx": int(row_idx_str),
                                         "status": "confirmed",
                                         "execution_stage": "Запланировано",
                                     }
@@ -176,18 +190,18 @@ async def monitor_and_sync_entries(bot: Bot):
                                         inserted_id = res.data[0]['id']
                                         found_ids.add(inserted_id)
                                         active_db_records[slot_key] = res.data[0]
-                                        print(f"✅ [DANILO INSERT] Запис додано: id={inserted_id}, {date_str} {time_val}", flush=True)
+                                        print(f"✅ [{doc_identifier} INSERT] Запис додано: id={inserted_id}, {date_str} {time_val}", flush=True)
                                     state_changed = True
                                 elif slot_key in active_db_records:
                                     found_ids.add(active_db_records[slot_key]['id'])
                                 else:
-                                    print(f"⏭️ [DANILO SKIP] Дубль проігноровано: {date_str}, row={row_idx_str}", flush=True)
+                                    print(f"⏭️ [{doc_identifier} SKIP] Дубль проігноровано: {date_str}, row={row_idx_str}", flush=True)
                                     try:
                                         exist_res = (
                                             supabase.table("appointments")
                                             .select("id")
                                             .eq("date", date_str)
-                                            .eq("row_idx", row_idx_str)
+                                            .eq("row_idx", int(row_idx_str))
                                             .limit(1)
                                             .execute()
                                         )
@@ -196,7 +210,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                     except Exception:
                                         pass
 
-                                last_seen_doctors[danilo_alert_key] = "sent"
+                                last_seen_doctors[alert_key] = "sent"
                                 state_changed = True
                             else:
                                 # Уведомление уже было отправлено ранее.
@@ -209,7 +223,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                             supabase.table("appointments")
                                             .select("id")
                                             .eq("date", date_str)
-                                            .eq("row_idx", row_idx_str)
+                                            .eq("row_idx", int(row_idx_str))
                                             .limit(1)
                                             .execute()
                                         )
@@ -219,7 +233,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                         pass
 
                         # ================================================================
-                        # ВЕТКА Б: Врач — ТЕТЕРНИК (или любой другой, кроме Данило)
+                        # ВЕТКА Б: Врач — ТЕТЕРНИК (или любой другой)
                         # Действия: полный цикл — INSERT новых + синхронизация статусов.
                         # ================================================================
                         else:
@@ -263,7 +277,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                         "phone": "Ручний запис",
                                         "date": date_str,
                                         "time": time_val,
-                                        "row_idx": row_idx_str,
+                                        "row_idx": int(row_idx_str),
                                         "status": "confirmed",
                                         "execution_stage": sheet_stage if sheet_stage else "Запланировано",
                                     }
@@ -280,7 +294,7 @@ async def monitor_and_sync_entries(bot: Bot):
                                             supabase.table("appointments")
                                             .select("id")
                                             .eq("date", date_str)
-                                            .eq("row_idx", row_idx_str)
+                                            .eq("row_idx", int(row_idx_str))
                                             .limit(1)
                                             .execute()
                                         )
