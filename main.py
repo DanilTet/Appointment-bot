@@ -38,10 +38,13 @@ async def handle_trigger_sync(request):
     """
     secret = request.query.get("secret", "")
     if secret != REVIEW_WEBHOOK_SECRET:
-        return web.Response(status=403, text="Forbidden")
+        return web.Response(status=403, text="Forbidden", headers={"Access-Control-Allow-Origin": "*"})
         
     force_sync_event.set()
-    return web.json_response({"status": "ok", "message": "Синхронізація активована"})
+    return web.json_response(
+        {"status": "ok", "message": "Синхронізація активована"},
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 async def handle_new_review_webhook(request):
     """
