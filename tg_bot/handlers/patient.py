@@ -554,7 +554,7 @@ async def process_cancel_appointment(callback: CallbackQuery):
     data = res.data[0] if res.data else None
 
     if data:
-        supabase.table("appointments").update({"status": "cancelled"}).eq("id", appt_id).execute()
+        supabase.table("appointments").update({"status": "cancelled", "execution_stage": "Cancelled_By_User"}).eq("id", appt_id).execute()
         
         try:
             dt = datetime.strptime(data['date'], "%d.%m.%Y")

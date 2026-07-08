@@ -553,3 +553,66 @@ async def execution_monitor(bot: Bot):
         except Exception as e:
             print(f"Error in execution_monitor: {e}")
         await asyncio.sleep(30)
+
+
+# --- 5. МОНИТОРИНГ ИЗМЕНЕНИЙ СТАТУСА И УВЕДОМЛЕНИЕ ПАЦИЕНТОВ ---
+async def status_notification_monitor(bot: Bot):
+    print("🤖 [SYSTEM] Запуск моніторингу оновлень статусів в БД...", flush=True)
+    while True:
+        try:
+            # 1. Записи со статусом "confirmed", но без установленного execution_stage
+            # (подтвержденные из веб-панели администрирования)
+            res_confirmed = supabase.table("appointments").select("*").eq("status", "confirmed").is_("execution_stage", "null").execute()
+            
+            for row in res_confirmed.data:
+                user_id = row.get("user_id")
+                if user_id and user_id != 0:
+                    service_db = row.get("service") or ""
+                    from config import REVERSE_SERVICE_MAP
+                    full_service = REVERSE_SERVICE_MAP.get(service_db, service_db)
+                    
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"✅ Ваш запис на <b>{full_service}</b> підтверджено! Чекаємо на вас.",
+                            parse_mode="HTML"
+                        )
+                        print(f"✉️ [NOTIFIER] Надіслано сповіщення про підтвердження: id={row['id']}, user_id={user_id}", flush=True)
+                    except Exception as e:
+                        print(f"⚠️ [NOTIFIER] Помилка відправки сповіщення про підтвердження для id={row['id']}, user_id={user_id}: {e}", flush=True)
+                
+                # Обновляем execution_stage
+                try:
+                    supabase.table("appointments").update({"execution_stage": "Запланировано"}).eq("id", row["id"]).execute()
+                except Exception as e:
+                    print(f"❌ [NOTIFIER] Помилка оновлення execution_stage для id={row['id']}: {e}", flush=True)
+
+            # 2. Записи со статусом "cancelled", у которых execution_stage не в ['Cancelled_Notified', 'Cancelled_By_User']
+            # (отмененные из веб-панели или Sheets, о которых мы еще не уведомили)
+            res_cancelled = supabase.table("appointments").select("*").eq("status", "cancelled").execute()
+            
+            for row in res_cancelled.data:
+                stage = row.get("execution_stage")
+                if stage not in ["Cancelled_Notified", "Cancelled_By_User"]:
+                    user_id = row.get("user_id")
+                    if user_id and user_id != 0:
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                "❌ На жаль, ваш запис було відхилено. Будь ласка, оберіть інший час."
+                            )
+                            print(f"✉️ [NOTIFIER] Надіслано сповіщення про скасування: id={row['id']}, user_id={user_id}", flush=True)
+                        except Exception as e:
+                            print(f"⚠️ [NOTIFIER] Помилка відправки сповіщення про скасування для id={row['id']}, user_id={user_id}: {e}", flush=True)
+                    
+                    # Обновляем execution_stage
+                    try:
+                        supabase.table("appointments").update({"execution_stage": "Cancelled_Notified"}).eq("id", row["id"]).execute()
+                    except Exception as e:
+                        print(f"❌ [NOTIFIER] Помилка оновлення execution_stage для id={row['id']}: {e}", flush=True)
+                        
+        except Exception as e:
+            print(f"🔥 [NOTIFIER ERROR] Помилка в циклі моніторингу статусів: {e}", flush=True)
+            
+        await asyncio.sleep(15)
+
