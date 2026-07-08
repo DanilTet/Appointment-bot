@@ -565,9 +565,9 @@ async def status_notification_monitor(bot: Bot):
             today = datetime.now() + timedelta(hours=2)
             today_date = today.date()
 
-            # 0. Новые заявки с сайта (execution_stage = 'Новая_Заявка_Сайт')
+            # 0. Новые заявки с сайта (из таблицы site_leads)
             try:
-                res_new = supabase.table("appointments").select("*").eq("execution_stage", "Новая_Заявка_Сайт").execute()
+                res_new = supabase.table("site_leads").select("*").eq("notified", False).execute()
                 for row in res_new.data:
                     for admin_id in ADMIN_IDS:
                         try:
@@ -576,15 +576,14 @@ async def status_notification_monitor(bot: Bot):
                                 f"👤 Пацієнт: <b>{row.get('name', '—')}</b>\n"
                                 f"📞 Телефон: <code>{row.get('phone', '—')}</code>\n"
                                 f"🩺 Послуга: {row.get('service', '—')}\n"
-                                f"📅 Бажана дата: {row.get('date', '—')}"
+                                f"💬 Коментар: {row.get('comment') or '—'}"
                             )
                             await bot.send_message(admin_id, msg, parse_mode="HTML")
                         except Exception as e:
                             print(f"❌ [NOTIFIER] Помилка відправки адміну про нову заявку: {e}", flush=True)
                     
-                    # Обновляем этап выполнения, чтобы больше не слать уведомление админу
-                    # и чтобы заявка попала в обычный поток (Ожидает)
-                    supabase.table("appointments").update({"execution_stage": "Запланировано"}).eq("id", row["id"]).execute()
+                    # Отмечаем заявку как уведомленную
+                    supabase.table("site_leads").update({"notified": True}).eq("id", row["id"]).execute()
             except Exception as e:
                 print(f"🔥 [NOTIFIER ERROR] Помилка при перевірці нових заявок з сайту: {e}", flush=True)
 
