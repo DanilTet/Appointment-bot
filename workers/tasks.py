@@ -409,10 +409,12 @@ async def monitor_and_sync_entries(bot: Bot):
             # Скасовані записи — отменяем только будущие, не прошлые
             for slot_key, db_record in active_db_records.items():
                 if db_record['id'] not in found_ids:
-                    appt_date = datetime.strptime(db_record['date'], "%d.%m.%Y")
-                    if appt_date.date() >= now.date():
-                        supabase.table("appointments").update({"status": "cancelled"}).eq("id", db_record['id']).execute()
-                        state_changed = True
+                    # Заявки с сайта не имеют row_idx, их не нужно отменять при синхронизации с Google Sheets
+                    if db_record.get('row_idx') is not None:
+                        appt_date = datetime.strptime(db_record['date'], "%d.%m.%Y")
+                        if appt_date.date() >= now.date():
+                            supabase.table("appointments").update({"status": "cancelled"}).eq("id", db_record['id']).execute()
+                            state_changed = True
 
             if state_changed:
                 save_state(last_seen_doctors)
@@ -562,6 +564,29 @@ async def status_notification_monitor(bot: Bot):
         try:
             today = datetime.now() + timedelta(hours=2)
             today_date = today.date()
+
+            # 0. Новые заявки с сайта (execution_stage = 'Новая_Заявка_Сайт')
+            try:
+                res_new = supabase.table("appointments").select("*").eq("execution_stage", "Новая_Заявка_Сайт").execute()
+                for row in res_new.data:
+                    for admin_id in ADMIN_IDS:
+                        try:
+                            msg = (
+                                f"🌐 <b>НОВА ЗАЯВКА З САЙТУ!</b>\n\n"
+                                f"👤 Пацієнт: <b>{row.get('name', '—')}</b>\n"
+                                f"📞 Телефон: <code>{row.get('phone', '—')}</code>\n"
+                                f"🩺 Послуга: {row.get('service', '—')}\n"
+                                f"📅 Бажана дата: {row.get('date', '—')}"
+                            )
+                            await bot.send_message(admin_id, msg, parse_mode="HTML")
+                        except Exception as e:
+                            print(f"❌ [NOTIFIER] Помилка відправки адміну про нову заявку: {e}", flush=True)
+                    
+                    # Обновляем этап выполнения, чтобы больше не слать уведомление админу
+                    # и чтобы заявка попала в обычный поток (Ожидает)
+                    supabase.table("appointments").update({"execution_stage": "Запланировано"}).eq("id", row["id"]).execute()
+            except Exception as e:
+                print(f"🔥 [NOTIFIER ERROR] Помилка при перевірці нових заявок з сайту: {e}", flush=True)
 
             # 1. Записи со статусом "confirmed", но без установленного execution_stage
             # (подтвержденные из веб-панели администрирования)
