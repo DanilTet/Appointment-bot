@@ -560,13 +560,24 @@ async def status_notification_monitor(bot: Bot):
     print("🤖 [SYSTEM] Запуск моніторингу оновлень статусів в БД...", flush=True)
     while True:
         try:
+            today = datetime.now() + timedelta(hours=2)
+            today_date = today.date()
+
             # 1. Записи со статусом "confirmed", но без установленного execution_stage
             # (подтвержденные из веб-панели администрирования)
             res_confirmed = supabase.table("appointments").select("*").eq("status", "confirmed").is_("execution_stage", "null").execute()
             
             for row in res_confirmed.data:
+                should_notify = False
+                try:
+                    appt_date = datetime.strptime(row['date'], "%d.%m.%Y").date()
+                    if appt_date >= today_date:
+                        should_notify = True
+                except Exception as ex:
+                    print(f"⚠️ [NOTIFIER] Помилка розбору дати {row.get('date')} для id={row['id']}: {ex}", flush=True)
+
                 user_id = row.get("user_id")
-                if user_id and user_id != 0:
+                if should_notify and user_id and user_id != 0:
                     service_db = row.get("service") or ""
                     from config import REVERSE_SERVICE_MAP
                     full_service = REVERSE_SERVICE_MAP.get(service_db, service_db)
@@ -594,8 +605,16 @@ async def status_notification_monitor(bot: Bot):
             for row in res_cancelled.data:
                 stage = row.get("execution_stage")
                 if stage not in ["Cancelled_Notified", "Cancelled_By_User"]:
+                    should_notify = False
+                    try:
+                        appt_date = datetime.strptime(row['date'], "%d.%m.%Y").date()
+                        if appt_date >= today_date:
+                            should_notify = True
+                    except Exception as ex:
+                        print(f"⚠️ [NOTIFIER] Помилка розбору дати {row.get('date')} для id={row['id']}: {ex}", flush=True)
+
                     user_id = row.get("user_id")
-                    if user_id and user_id != 0:
+                    if should_notify and user_id and user_id != 0:
                         try:
                             await bot.send_message(
                                 user_id,
