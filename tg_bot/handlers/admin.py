@@ -293,6 +293,21 @@ async def admin_approve_review(callback: CallbackQuery):
 async def admin_reject_review(callback: CallbackQuery):
     review_id = callback.data.split(":")[1]
     
+    # Защита от двойного нажатия
+    res = supabase.table("reviews").select("status").eq("id", review_id).execute()
+    if res.data and res.data[0]["status"] != "pending":
+        current_status = res.data[0]["status"]
+        status_label = "схвалений" if current_status == "approved" else "відхилений"
+        await callback.answer("Цей відгук вже опрацьований!", show_alert=True)
+        try:
+            await callback.message.edit_text(
+                callback.message.html_text + f"\n\n⚠️ <i>Вже опрацьовано (статус: {status_label}).</i>",
+                parse_mode="HTML", reply_markup=None
+            )
+        except:
+            pass
+        return
+        
     # Меняем статус в базе
     supabase.table("reviews").update({"status": "rejected"}).eq("id", review_id).execute()
     
