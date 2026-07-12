@@ -1,15 +1,17 @@
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 # Импортируем настройки, сервисы и генератор клавиатур
 from config import ADMIN_IDS, REVERSE_SERVICE_MAP
 from services.db import supabase, update_admin_setting, get_bot_stats
 from services.sheets import (
     get_schedule_report, schedule_sheet, get_monday_str,
-    get_col_idx, get_next_row_idx, update_sheet_slots, update_execution_stage
+    get_col_idx, get_next_row_idx, update_sheet_slots, update_execution_stage,
+    get_raw_appointments
 )
+from services.renderer import generate_schedule_image
 from tg_bot.keyboards import get_settings_kb
 
 router = Router()
@@ -51,9 +53,26 @@ async def admin_show_tomorrow(callback: CallbackQuery):
     
     tomorrow = datetime.now() + timedelta(days=1) + timedelta(hours=2) # Киевское время
     await callback.message.answer("Отримую дані з таблиці... ⏳")
-    report_text = await get_schedule_report(tomorrow)
-
-    await callback.message.answer(report_text, parse_mode="HTML")
+    
+    try:
+        raw_appts = get_raw_appointments(tomorrow)
+        date_str = tomorrow.strftime("%d.%m.%Y")
+        
+        if not raw_appts:
+            # Если приемов нет, пишем текстом
+            report_text = await get_schedule_report(tomorrow)
+            await callback.message.answer(report_text, parse_mode="HTML")
+        else:
+            # Генерируем картинку
+            photo_stream = generate_schedule_image(date_str, raw_appts)
+            photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
+            await callback.message.answer_photo(photo_file, caption=f"📅 Розклад на {date_str}")
+    except Exception as e:
+        print(f"Помилка генерації картинки розкладу: {e}")
+        # Фолбек на текст
+        report_text = await get_schedule_report(tomorrow)
+        await callback.message.answer(report_text, parse_mode="HTML")
+        
     await callback.answer()
 
 @router.callback_query(F.data.startswith("show_day:"))
@@ -64,8 +83,23 @@ async def handle_show_day_from_monitor(callback: CallbackQuery):
         target_date = datetime.strptime(date_str, "%d.%m.%Y")
         await callback.message.answer(f"Отримую розклад на {date_str}... 🔍")
 
-        report_text = await get_schedule_report(target_date)
-        await callback.message.answer(report_text, parse_mode="HTML")
+        try:
+            raw_appts = get_raw_appointments(target_date)
+            if not raw_appts:
+                # Если приемов нет, пишем текстом
+                report_text = await get_schedule_report(target_date)
+                await callback.message.answer(report_text, parse_mode="HTML")
+            else:
+                # Генерируем картинку
+                photo_stream = generate_schedule_image(date_str, raw_appts)
+                photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
+                await callback.message.answer_photo(photo_file, caption=f"📅 Розклад на {date_str}")
+        except Exception as e:
+            print(f"Помилка генерації картинки розкладу (show_day): {e}")
+            # Фолбек на текст
+            report_text = await get_schedule_report(target_date)
+            await callback.message.answer(report_text, parse_mode="HTML")
+            
         await callback.answer()
     except Exception as e:
         await callback.answer(f"Помилка: {e}", show_alert=True)

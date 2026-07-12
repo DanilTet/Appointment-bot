@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 # pyrefly: ignore [missing-import]
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 # Импортируем наши настройки и базы
 from config import ADMIN_IDS, SKIP_ROWS
@@ -12,8 +12,10 @@ from services.sheets import (
     get_monday_str, 
     get_col_idx, 
     get_appointment_duration, 
-    get_schedule_report
+    get_schedule_report,
+    get_raw_appointments
 )
+from services.renderer import generate_schedule_image
 
 import re
 
@@ -442,12 +444,39 @@ async def daily_scheduler(bot: Bot):
         await asyncio.sleep(wait_seconds)
 
         today = datetime.now() + timedelta(hours=2)
-        report_text = await get_schedule_report(today)
-
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
-            except: pass
+        date_str = today.strftime("%d.%m.%Y")
+        
+        try:
+            raw_appts = get_raw_appointments(today)
+            if not raw_appts:
+                # Если приемов нет, пишем текстом
+                report_text = await get_schedule_report(today)
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
+                    except: pass
+            else:
+                # Генерируем картинку
+                photo_stream = generate_schedule_image(date_str, raw_appts)
+                for admin_id in ADMIN_IDS:
+                    try:
+                        photo_stream.seek(0) # Сбрасываем указатель для каждого админа
+                        photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
+                        await bot.send_photo(admin_id, photo_file, caption=f"☀️ <b>Ранішній звіт на {date_str}</b>", parse_mode="HTML")
+                    except Exception as ex:
+                        print(f"Помилка відправки картинки утреннего отчета для {admin_id}: {ex}")
+                        # Фолбек на текст
+                        report_text = await get_schedule_report(today)
+                        try:
+                            await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
+                        except: pass
+        except Exception as e:
+            print(f"Помилка генерації утреннего отчета: {e}")
+            report_text = await get_schedule_report(today)
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
+                except: pass
 
 # --- 3. ПЛАНИРОВЩИК НАПОМИНАНИЙ ПАЦИЕНТАМ ---
 async def reminder_scheduler(bot: Bot):

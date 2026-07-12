@@ -141,6 +141,53 @@ async def get_schedule_report(target_date):
         
     return "\n".join(report_lines)
 
+def get_raw_appointments(target_date):
+    """
+    Получает структурированный список приемов на указанную дату из Google Таблицы.
+    Возвращает список словарей. Если приемов нет или произошла ошибка, возвращает пустой список.
+    """
+    date_str = target_date.strftime("%d.%m.%Y")
+    sheet_name = get_monday_str(target_date)
+
+    try:
+        ws = schedule_sheet.worksheet(sheet_name)
+        col_idx = get_col_idx(target_date) - 1
+        data = ws.get_all_values()
+    except Exception as e:
+        print(f"Помилка доступу до таблиці при отриманні сирих даних ({date_str}): {e}")
+        return []
+    
+    appointments = []
+    curr_row = 4
+
+    while curr_row < len(data):
+        if (curr_row + 1) in SKIP_ROWS:
+            curr_row += 1
+            continue
+        
+        if curr_row + 1 >= len(data): 
+            break
+            
+        patient_info = data[curr_row + 1][col_idx].strip()
+
+        if patient_info:
+            time_val = data[curr_row][col_idx - 1].strip()
+            service = data[curr_row][col_idx].strip()
+            doctor = data[curr_row + 2][col_idx].strip()
+            anesthesia = data[curr_row + 3][col_idx].strip()
+
+            appointments.append({
+                "time": time_val,
+                "patient": patient_info,
+                "service": service,
+                "doctor": doctor,
+                "anesthesia": anesthesia
+            })
+            
+        curr_row += 5
+
+    return appointments
+
 async def get_available_dates(days_to_check=10):
     available_dates = []
     now = datetime.now() + timedelta(hours=2) # Киевское время
