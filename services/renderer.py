@@ -3,11 +3,13 @@ import io
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
-# Попробуем найти шрифт Arial в системе, если нет — используем дефолтный шрифт
-FONT_PATH = "C:\\Windows\\Fonts\\arial.ttf"
+# Используем скачанный шрифт Roboto с поддержкой кириллицы (для переносимости между Windows и Render Linux)
+FONT_PATH = os.path.join(os.path.dirname(__file__), "Roboto-Regular.ttf")
 if not os.path.exists(FONT_PATH):
-    # Фолбек на случай, если запуск идет не на Windows
-    FONT_PATH = "arial.ttf"
+    # Фолбек на системный Arial в Windows, если файл Roboto не найден локально
+    FONT_PATH = "C:\\Windows\\Fonts\\arial.ttf"
+    if not os.path.exists(FONT_PATH):
+        FONT_PATH = "arial.ttf"
 
 def generate_schedule_image(date_str, appointments, page=1, total_pages=1):
     """
