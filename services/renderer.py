@@ -9,19 +9,19 @@ if not os.path.exists(FONT_PATH):
     # Фолбек на случай, если запуск идет не на Windows
     FONT_PATH = "arial.ttf"
 
-def generate_schedule_image(date_str, appointments):
+def generate_schedule_image(date_str, appointments, page=1, total_pages=1):
     """
-    Генерирует изображение расписания на основе списка приемов.
+    Генерирует изображение части расписания на основе списка приемов.
     Возвращает байтовый поток (BytesIO) с PNG-изображением.
     """
     # Размеры изображения
     # Ширина фиксированная, высота зависит от количества приемов
     width = 750
-    header_height = 100
-    card_height = 130
+    header_height = 110
+    card_height = 135
     card_gap = 15
     padding = 25
-    footer_height = 60
+    footer_height = 65
     
     num_appts = len(appointments)
     if num_appts == 0:
@@ -44,14 +44,14 @@ def generate_schedule_image(date_str, appointments):
     img = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Инициализация шрифтов
+    # Инициализация шрифтов (сделали шрифты крупнее и четче)
     try:
-        font_title = ImageFont.truetype(FONT_PATH, 28)
-        font_sub = ImageFont.truetype(FONT_PATH, 16)
-        font_time = ImageFont.truetype(FONT_PATH, 24)
-        font_name = ImageFont.truetype(FONT_PATH, 20)
-        font_service = ImageFont.truetype(FONT_PATH, 16)
-        font_tag = ImageFont.truetype(FONT_PATH, 12)
+        font_title = ImageFont.truetype(FONT_PATH, 30)
+        font_sub = ImageFont.truetype(FONT_PATH, 18)
+        font_time = ImageFont.truetype(FONT_PATH, 28) # Было 24
+        font_name = ImageFont.truetype(FONT_PATH, 22) # Было 20
+        font_service = ImageFont.truetype(FONT_PATH, 18) # Было 16
+        font_tag = ImageFont.truetype(FONT_PATH, 14) # Было 12
     except IOError:
         # Если шрифты не загрузились, Pillow будет использовать ImageFont.load_default()
         font_title = ImageFont.load_default()
@@ -65,12 +65,13 @@ def generate_schedule_image(date_str, appointments):
     # Декоративная полоса сверху
     draw.rectangle([0, 0, width, 8], fill=accent_blue)
     
-    # Заголовок
-    draw.text((padding, 25), "РОЗКЛАД ПРИЙОМІВ", font=font_title, fill=text_main_color)
-    draw.text((padding, 63), f"Дата: {date_str}  •  Всього записів: {num_appts}", font=font_sub, fill=text_muted_color)
+    # Заголовок с указанием части
+    part_suffix = f" (Частина {page} з {total_pages})" if total_pages > 1 else ""
+    draw.text((padding, 25), f"РОЗКЛАД ПРИЙОМІВ{part_suffix}", font=font_title, fill=text_main_color)
+    draw.text((padding, 68), f"Дата: {date_str}  •  Показано записів: {num_appts}", font=font_sub, fill=text_muted_color)
     
     # Разделитель шапки
-    draw.line([padding, 90, width - padding, 90], fill=(51, 65, 85), width=1)
+    draw.line([padding, 100, width - padding, 100], fill=(51, 65, 85), width=1)
 
     # 2. Отрисовка списка приемов
     y_offset = header_height + card_gap
@@ -83,7 +84,7 @@ def generate_schedule_image(date_str, appointments):
             fill=card_bg_color
         )
         draw.text(
-            (width // 2 - 120, y_offset + 45),
+            (width // 2 - 150, y_offset + 45),
             "Сьогодні прийомів немає. День вільний!",
             font=font_name,
             fill=text_muted_color
@@ -125,11 +126,11 @@ def generate_schedule_image(date_str, appointments):
             doctor_str = appt.get("doctor", "Тетернік")
             doc_label = f"👨‍⚕️ {doctor_str}"
             
-            # Добавим плашку врача
-            doc_len = len(doc_label) * 8 + 20
+            # Добавим плашку врача (рассчитываем размер шрифта чуть точнее)
+            doc_len = len(doc_label) * 9 + 20
             doc_x0 = x0 + 130
             doc_y0 = y0 + 90
-            draw.rounded_rectangle([doc_x0, doc_y0, doc_x0 + doc_len, doc_y0 + 22], radius=4, fill=doctor_bg)
+            draw.rounded_rectangle([doc_x0, doc_y0, doc_x0 + doc_len, doc_y0 + 24], radius=4, fill=doctor_bg)
             draw.text((doc_x0 + 8, doc_y0 + 2), doc_label, font=font_tag, fill=doctor_fg)
 
             # Если есть наркоз, добавим яркую плашку
@@ -137,8 +138,8 @@ def generate_schedule_image(date_str, appointments):
                 tag_x0 = doc_x0 + doc_len + 12
                 tag_y0 = doc_y0
                 tag_text = f"💉 {anesthesia_text}"
-                tag_len = len(tag_text) * 8 + 20
-                draw.rounded_rectangle([tag_x0, tag_y0, tag_x0 + tag_len, tag_y0 + 22], radius=4, fill=anesthesia_alert_bg)
+                tag_len = len(tag_text) * 9 + 20
+                draw.rounded_rectangle([tag_x0, tag_y0, tag_x0 + tag_len, tag_y0 + 24], radius=4, fill=anesthesia_alert_bg)
                 draw.text((tag_x0 + 8, tag_y0 + 2), tag_text, font=font_tag, fill=anesthesia_alert_fg)
             else:
                 # Если анестезия указана, но без наркоза (местная/без нее)
@@ -146,8 +147,8 @@ def generate_schedule_image(date_str, appointments):
                     tag_x0 = doc_x0 + doc_len + 12
                     tag_y0 = doc_y0
                     tag_text = f"🧬 {anesthesia_text}"
-                    tag_len = len(tag_text) * 8 + 20
-                    draw.rounded_rectangle([tag_x0, tag_y0, tag_x0 + tag_len, tag_y0 + 22], radius=4, fill=(71, 85, 105))
+                    tag_len = len(tag_text) * 9 + 20
+                    draw.rounded_rectangle([tag_x0, tag_y0, tag_x0 + tag_len, tag_y0 + 24], radius=4, fill=(71, 85, 105))
                     draw.text((tag_x0 + 8, tag_y0 + 2), tag_text, font=font_tag, fill=text_main_color)
 
             # Смещение для следующей карточки

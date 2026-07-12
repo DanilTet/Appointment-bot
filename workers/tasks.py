@@ -446,37 +446,38 @@ async def daily_scheduler(bot: Bot):
         today = datetime.now() + timedelta(hours=2)
         date_str = today.strftime("%d.%m.%Y")
         
+        # 1. Сначала ВСЕГДА отправляем текстовый отчет всем администраторам
+        report_text = await get_schedule_report(today)
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
+            except: pass
+            
+        # 2. Пытаемся дополнительно отправить картинку(и), разбивая приемы по 6 штук
         try:
             raw_appts = get_raw_appointments(today)
-            if not raw_appts:
-                # Если приемов нет, пишем текстом
-                report_text = await get_schedule_report(today)
-                for admin_id in ADMIN_IDS:
-                    try:
-                        await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
-                    except: pass
-            else:
-                # Генерируем картинку
-                photo_stream = generate_schedule_image(date_str, raw_appts)
-                for admin_id in ADMIN_IDS:
-                    try:
-                        photo_stream.seek(0) # Сбрасываем указатель для каждого админа
-                        photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
-                        await bot.send_photo(admin_id, photo_file, caption=f"☀️ <b>Ранішній звіт на {date_str}</b>", parse_mode="HTML")
-                    except Exception as ex:
-                        print(f"Помилка відправки картинки утреннего отчета для {admin_id}: {ex}")
-                        # Фолбек на текст
-                        report_text = await get_schedule_report(today)
+            if raw_appts:
+                chunk_size = 6
+                chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
+                total_chunks = len(chunks)
+                
+                for index, chunk in enumerate(chunks):
+                    page_num = index + 1
+                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
+                    
+                    for admin_id in ADMIN_IDS:
                         try:
-                            await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
-                        except: pass
+                            photo_stream.seek(0) # Сбрасываем указатель для каждого получателя
+                            photo_file = BufferedInputFile(
+                                photo_stream.getvalue(), 
+                                filename=f"schedule_{date_str}_p{page_num}.png"
+                            )
+                            caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
+                            await bot.send_photo(admin_id, photo_file, caption=caption_str)
+                        except Exception as ex:
+                            print(f"Помилка відправки картинки утреннего отчета для {admin_id}: {ex}")
         except Exception as e:
-            print(f"Помилка генерації утреннего отчета: {e}")
-            report_text = await get_schedule_report(today)
-            for admin_id in ADMIN_IDS:
-                try:
-                    await bot.send_message(admin_id, f"☀️ <b>Ранішній звіт</b>\n\n{report_text}", parse_mode="HTML")
-                except: pass
+            print(f"Помилка генерации картинок для утреннего отчета: {e}")
 
 # --- 3. ПЛАНИРОВЩИК НАПОМИНАНИЙ ПАЦИЕНТАМ ---
 async def reminder_scheduler(bot: Bot):

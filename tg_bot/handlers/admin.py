@@ -54,24 +54,31 @@ async def admin_show_tomorrow(callback: CallbackQuery):
     tomorrow = datetime.now() + timedelta(days=1) + timedelta(hours=2) # Киевское время
     await callback.message.answer("Отримую дані з таблиці... ⏳")
     
+    # 1. Сначала ВСЕГДА отправляем текстовый отчет
+    report_text = await get_schedule_report(tomorrow)
+    await callback.message.answer(report_text, parse_mode="HTML")
+    
+    # 2. Пытаемся отправить расписание в виде картинок, разбивая по 6 приемов
     try:
         raw_appts = get_raw_appointments(tomorrow)
         date_str = tomorrow.strftime("%d.%m.%Y")
         
-        if not raw_appts:
-            # Если приемов нет, пишем текстом
-            report_text = await get_schedule_report(tomorrow)
-            await callback.message.answer(report_text, parse_mode="HTML")
-        else:
-            # Генерируем картинку
-            photo_stream = generate_schedule_image(date_str, raw_appts)
-            photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
-            await callback.message.answer_photo(photo_file, caption=f"📅 Розклад на {date_str}")
+        if raw_appts:
+            chunk_size = 6
+            chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
+            total_chunks = len(chunks)
+            
+            for index, chunk in enumerate(chunks):
+                page_num = index + 1
+                photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
+                photo_file = BufferedInputFile(
+                    photo_stream.getvalue(), 
+                    filename=f"schedule_{date_str}_p{page_num}.png"
+                )
+                caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
+                await callback.message.answer_photo(photo_file, caption=caption_str)
     except Exception as e:
         print(f"Помилка генерації картинки розкладу: {e}")
-        # Фолбек на текст
-        report_text = await get_schedule_report(tomorrow)
-        await callback.message.answer(report_text, parse_mode="HTML")
         
     await callback.answer()
 
@@ -83,22 +90,29 @@ async def handle_show_day_from_monitor(callback: CallbackQuery):
         target_date = datetime.strptime(date_str, "%d.%m.%Y")
         await callback.message.answer(f"Отримую розклад на {date_str}... 🔍")
 
+        # 1. Сначала ВСЕГДА отправляем текстовый отчет
+        report_text = await get_schedule_report(target_date)
+        await callback.message.answer(report_text, parse_mode="HTML")
+
+        # 2. Пытаемся отправить расписание в виде картинок, разбивая по 6 приемов
         try:
             raw_appts = get_raw_appointments(target_date)
-            if not raw_appts:
-                # Если приемов нет, пишем текстом
-                report_text = await get_schedule_report(target_date)
-                await callback.message.answer(report_text, parse_mode="HTML")
-            else:
-                # Генерируем картинку
-                photo_stream = generate_schedule_image(date_str, raw_appts)
-                photo_file = BufferedInputFile(photo_stream.getvalue(), filename=f"schedule_{date_str}.png")
-                await callback.message.answer_photo(photo_file, caption=f"📅 Розклад на {date_str}")
+            if raw_appts:
+                chunk_size = 6
+                chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
+                total_chunks = len(chunks)
+                
+                for index, chunk in enumerate(chunks):
+                    page_num = index + 1
+                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
+                    photo_file = BufferedInputFile(
+                        photo_stream.getvalue(), 
+                        filename=f"schedule_{date_str}_p{page_num}.png"
+                    )
+                    caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
+                    await callback.message.answer_photo(photo_file, caption=caption_str)
         except Exception as e:
             print(f"Помилка генерації картинки розкладу (show_day): {e}")
-            # Фолбек на текст
-            report_text = await get_schedule_report(target_date)
-            await callback.message.answer(report_text, parse_mode="HTML")
             
         await callback.answer()
     except Exception as e:
