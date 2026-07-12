@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, InputMediaPhoto
 
 # Импортируем настройки, сервисы и генератор клавиатур
 from config import ADMIN_IDS, REVERSE_SERVICE_MAP
@@ -58,7 +58,7 @@ async def admin_show_tomorrow(callback: CallbackQuery):
     report_text = await get_schedule_report(tomorrow)
     await callback.message.answer(report_text, parse_mode="HTML")
     
-    # 2. Пытаемся отправить расписание в виде картинок, разбивая по 6 приемов
+    # 2. Пытаемся отправить расписание в виде картинок (одним сообщением-альбомом)
     try:
         raw_appts = get_raw_appointments(tomorrow)
         date_str = tomorrow.strftime("%d.%m.%Y")
@@ -66,17 +66,20 @@ async def admin_show_tomorrow(callback: CallbackQuery):
         if raw_appts:
             chunk_size = 6
             chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
-            total_chunks = len(chunks)
+            media_group = []
             
             for index, chunk in enumerate(chunks):
                 page_num = index + 1
-                photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
+                photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=len(chunks))
                 photo_file = BufferedInputFile(
                     photo_stream.getvalue(), 
                     filename=f"schedule_{date_str}_p{page_num}.png"
                 )
-                caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
-                await callback.message.answer_photo(photo_file, caption=caption_str)
+                caption_str = f"🖼 Частина {page_num} з {len(chunks)}" if len(chunks) > 1 else f"📅 Візуальний розклад на {date_str}"
+                media_group.append(InputMediaPhoto(media=photo_file, caption=caption_str))
+                
+            if media_group:
+                await callback.message.bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
     except Exception as e:
         print(f"Помилка генерації картинки розкладу: {e}")
         
@@ -94,25 +97,32 @@ async def handle_show_day_from_monitor(callback: CallbackQuery):
         report_text = await get_schedule_report(target_date)
         await callback.message.answer(report_text, parse_mode="HTML")
 
-        # 2. Пытаемся отправить расписание в виде картинок, разбивая по 6 приемов
+        # 2. Пытаемся отправить расписание в виде картинок (одним сообщением-альбомом)
         try:
             raw_appts = get_raw_appointments(target_date)
             if raw_appts:
                 chunk_size = 6
                 chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
-                total_chunks = len(chunks)
+                media_group = []
                 
                 for index, chunk in enumerate(chunks):
                     page_num = index + 1
-                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
+                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=len(chunks))
                     photo_file = BufferedInputFile(
                         photo_stream.getvalue(), 
                         filename=f"schedule_{date_str}_p{page_num}.png"
                     )
-                    caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
-                    await callback.message.answer_photo(photo_file, caption=caption_str)
+                    caption_str = f"🖼 Частина {page_num} з {len(chunks)}" if len(chunks) > 1 else f"📅 Візуальний розклад на {date_str}"
+                    media_group.append(InputMediaPhoto(media=photo_file, caption=caption_str))
+                    
+                if media_group:
+                    await callback.message.bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
         except Exception as e:
             print(f"Помилка генерації картинки розкладу (show_day): {e}")
+            
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Помилка: {e}", show_alert=True)
             
         await callback.answer()
     except Exception as e:

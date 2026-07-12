@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 # pyrefly: ignore [missing-import]
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, InputMediaPhoto
 
 # Импортируем наши настройки и базы
 from config import ADMIN_IDS, SKIP_ROWS
@@ -459,23 +459,30 @@ async def daily_scheduler(bot: Bot):
             if raw_appts:
                 chunk_size = 6
                 chunks = [raw_appts[i:i + chunk_size] for i in range(0, len(raw_appts), chunk_size)]
-                total_chunks = len(chunks)
                 
+                # Создаем список потоков для каждой страницы
+                photo_streams = []
                 for index, chunk in enumerate(chunks):
                     page_num = index + 1
-                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=total_chunks)
-                    
-                    for admin_id in ADMIN_IDS:
-                        try:
-                            photo_stream.seek(0) # Сбрасываем указатель для каждого получателя
+                    photo_stream = generate_schedule_image(date_str, chunk, page=page_num, total_pages=len(chunks))
+                    photo_streams.append((page_num, photo_stream))
+                
+                for admin_id in ADMIN_IDS:
+                    try:
+                        media_group = []
+                        for page_num, photo_stream in photo_streams:
+                            photo_stream.seek(0) # Сбрасываем указатель
                             photo_file = BufferedInputFile(
                                 photo_stream.getvalue(), 
                                 filename=f"schedule_{date_str}_p{page_num}.png"
                             )
-                            caption_str = f"🖼 Частина {page_num} з {total_chunks}" if total_chunks > 1 else f"📅 Візуальний розклад на {date_str}"
-                            await bot.send_photo(admin_id, photo_file, caption=caption_str)
-                        except Exception as ex:
-                            print(f"Помилка відправки картинки утреннего отчета для {admin_id}: {ex}")
+                            caption_str = f"🖼 Частина {page_num} з {len(chunks)}" if len(chunks) > 1 else f"📅 Візуальний розклад на {date_str}"
+                            media_group.append(InputMediaPhoto(media=photo_file, caption=caption_str))
+                        
+                        if media_group:
+                            await bot.send_media_group(chat_id=admin_id, media=media_group)
+                    except Exception as ex:
+                        print(f"Помилка відправки альбому утреннего отчета для {admin_id}: {ex}")
         except Exception as e:
             print(f"Помилка генерации картинок для утреннего отчета: {e}")
 
