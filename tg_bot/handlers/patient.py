@@ -32,19 +32,15 @@ async def cmd_start(message: Message):
 
     photo = FSInputFile("photos/start_message/start_img.png")    
     buttons = [
-        [InlineKeyboardButton(text="🗓 Записатись", callback_data="make_appointment")],
+        [InlineKeyboardButton(text="🗓 Записатись на прийом", callback_data="make_appointment")],
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
-        [InlineKeyboardButton(text="⭐️ Відгуки/Залишити відгук", callback_data="reviews_menu")],
-        [InlineKeyboardButton(text="🏥 Лікарня", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
-        [InlineKeyboardButton(text="🧐 Як знайти лікарню", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
-        [InlineKeyboardButton(text="📸 Instagram", url="https://www.instagram.com/dr.teternik")]
+        [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
+        [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
+        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if message.from_user.id in ADMIN_IDS:
-        buttons.append([InlineKeyboardButton(text="📥 Актуальні заявки", callback_data="admin_pending_menu")])
-        buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
-        buttons.append([InlineKeyboardButton(text="📊 Розклад на завтра", callback_data="admin_tomorrow")])
-        buttons.append([InlineKeyboardButton(text="⚙️ Налаштування", callback_data="admin_settings")])
+        buttons.append([InlineKeyboardButton(text="🛠 Адмін-панель", callback_data="admin_panel_menu")])
 
     welcome_text = (
         "Вітаю! Я - <b>Тетернік Олег</b>, ваш лікар-ендоскопіст.\n"
@@ -66,19 +62,15 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
 
     photo = FSInputFile("photos/start_message/start_img.png")    
     buttons = [
-        [InlineKeyboardButton(text="🗓 Записатись", callback_data="make_appointment")],
+        [InlineKeyboardButton(text="🗓 Записатись на прийом", callback_data="make_appointment")],
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
-        [InlineKeyboardButton(text="⭐️ Відгуки/Залишити відгук", callback_data="reviews_menu")],
-        [InlineKeyboardButton(text="🏥 Лікарня", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
-        [InlineKeyboardButton(text="🧐 Як знайти лікарню", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
-        [InlineKeyboardButton(text="📸 Instagram", url="https://www.instagram.com/dr.teternik")]
+        [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
+        [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
+        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if callback.from_user.id in ADMIN_IDS:
-        buttons.append([InlineKeyboardButton(text="📥 Актуальні заявки", callback_data="admin_pending_menu")])
-        buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
-        buttons.append([InlineKeyboardButton(text="📊 Розклад на завтра", callback_data="admin_tomorrow")])
-        buttons.append([InlineKeyboardButton(text="⚙️ Налаштування", callback_data="admin_settings")])
+        buttons.append([InlineKeyboardButton(text="🛠 Адмін-панель", callback_data="admin_panel_menu")])
 
     welcome_text = (
         "Вітаю! Я - <b>Тетернік Олег</b>, ваш лікар-ендоскопіст.\n"
@@ -90,6 +82,47 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.answer_photo(photo=photo, caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_main_inline")
+async def back_to_main_inline(callback: CallbackQuery):
+    buttons = [
+        [InlineKeyboardButton(text="🗓 Записатись на прийом", callback_data="make_appointment")],
+        [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
+        [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
+        [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
+        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
+    ]
+
+    if callback.from_user.id in ADMIN_IDS:
+        buttons.append([InlineKeyboardButton(text="🛠 Адмін-панель", callback_data="admin_panel_menu")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.edit_reply_markup(reply_markup=inline_kb)
+    await callback.answer()
+
+@router.callback_query(F.data == "info_menu")
+async def show_info_menu(callback: CallbackQuery):
+    buttons = [
+        [InlineKeyboardButton(text="❓ Часті питання", callback_data="faq_menu")],
+        [InlineKeyboardButton(text="🏥 Про лікарню", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
+        [InlineKeyboardButton(text="📍 Як нас знайти", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
+        [InlineKeyboardButton(text="🔙 Назад у головне меню", callback_data="back_to_main_inline")]
+    ]
+    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+@router.callback_query(F.data == "faq_menu")
+async def show_faq_menu(callback: CallbackQuery):
+    utm = "?utm_source=telegram_bot&utm_medium=button&utm_campaign=faq_menu"
+    buttons = [
+        [InlineKeyboardButton(text="❓ Гастроскопія", url=f"https://endo.kh.ua/gastroscopy/{utm}")],
+        [InlineKeyboardButton(text="❓ Колоноскопія", url=f"https://endo.kh.ua/colonoscopy/{utm}")],
+        [InlineKeyboardButton(text="❓ УЗД", url=f"https://endo.kh.ua/uzd/{utm}")],
+        [InlineKeyboardButton(text="❓ Хірургія", url=f"https://endo.kh.ua/surgery/{utm}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="info_menu")]
+    ]
+    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
 # ==========================================

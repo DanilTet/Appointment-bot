@@ -459,3 +459,20 @@ async def show_pending_reviews(callback: CallbackQuery):
             ]
         ])
         await callback.message.bot.send_message(callback.from_user.id, admin_text, parse_mode="HTML", reply_markup=admin_kb)
+
+@router.callback_query(F.data == "admin_panel_menu")
+async def show_admin_panel(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    buttons = [
+        [InlineKeyboardButton(text="📥 Актуальні заявки", callback_data="admin_pending_menu")],
+        [InlineKeyboardButton(text="📈 Розклад на завтра", callback_data="admin_tomorrow")],
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
+            InlineKeyboardButton(text="⚙️ Налаштування", callback_data="admin_settings")
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_inline")]
+    ]
+    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
