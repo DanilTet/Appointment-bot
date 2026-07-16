@@ -36,7 +36,7 @@ async def cmd_start(message: Message):
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
         [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
         [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
-        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
+        [InlineKeyboardButton(text="📸 Instagram Лікаря", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if message.from_user.id in ADMIN_IDS:
@@ -66,7 +66,7 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
         [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
         [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
-        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
+        [InlineKeyboardButton(text="📸 Instagram Лікаря", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if callback.from_user.id in ADMIN_IDS:
@@ -91,7 +91,7 @@ async def back_to_main_inline(callback: CallbackQuery):
         [InlineKeyboardButton(text="📋 Мої записи", callback_data="my_appointments")],
         [InlineKeyboardButton(text="⭐ Відгуки", callback_data="reviews_menu")],
         [InlineKeyboardButton(text="ℹ️ Інформація та Питання", callback_data="info_menu")],
-        [InlineKeyboardButton(text="📸 Наш Instagram", url="https://www.instagram.com/dr.teternik")]
+        [InlineKeyboardButton(text="📸 Instagram Лікаря", url="https://www.instagram.com/dr.teternik")]
     ]
 
     if callback.from_user.id in ADMIN_IDS:
