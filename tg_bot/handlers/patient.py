@@ -105,8 +105,9 @@ async def back_to_main_inline(callback: CallbackQuery):
 async def show_info_menu(callback: CallbackQuery):
     buttons = [
         [InlineKeyboardButton(text="❓ Часті питання", callback_data="faq_menu")],
-        [InlineKeyboardButton(text="🏥 Про лікарню", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
+        [InlineKeyboardButton(text="🏥 Лікарня на карті", url="https://maps.app.goo.gl/XpYjaFtw7vAvdJST8?g_st=ic")],
         [InlineKeyboardButton(text="📍 Як нас знайти", url="https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTI5MTUwNDQ4ODkxNTMz?story_media_id=3382227683352410926&igsh=MWZ0cHdybTY4cmtoNQ==")],
+        [InlineKeyboardButton(text="🧑‍💻 Про розробника", url="https://github.com/DanilTet")],
         [InlineKeyboardButton(text="🔙 Назад у головне меню", callback_data="back_to_main_inline")]
     ]
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
