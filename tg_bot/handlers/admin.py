@@ -535,14 +535,14 @@ async def admin_broadcast_menu(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Назад до адмін-панелі", callback_data="admin_panel_menu")]
     ])
 
-    await callback.message.edit_text(
+    text = (
         f"📢 <b>Управління розсилками</b>\n\n"
         f"👥 Всього потенційних отримувачів: <b>{users_count}</b> осіб\n"
         f"⏰ Заплановано розсилок: <b>{scheduled_count}</b>\n\n"
-        f"Оберіть дію нижче:",
-        parse_mode="HTML",
-        reply_markup=kb
+        f"Оберіть дію нижче:"
     )
+
+    await safe_edit_or_send(callback, text, reply_markup=kb)
     await callback.answer()
 
 
@@ -556,14 +556,14 @@ async def bc_create_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="❌ Скасувати", callback_data="bc_cancel")]
     ])
 
-    await callback.message.edit_text(
+    text = (
         "📢 <b>Створення нової розсилки</b>\n\n"
         "Надішліть у чат <b>текст</b> або <b>фото з підписом</b> для розсилки.\n\n"
         "💡 <i>Підтримується HTML-форматування (жирний, курсив, посилання).</i>\n"
-        "<i>На наступному кроці ви зможете додавати кнопки та протестувати вигляд!</i>",
-        parse_mode="HTML",
-        reply_markup=kb
+        "<i>На наступному кроці ви зможете додавати кнопки та протестувати вигляд!</i>"
     )
+
+    await safe_edit_or_send(callback, text, reply_markup=kb)
     await callback.answer()
 
 
@@ -642,13 +642,13 @@ async def bc_add_btn_prompt(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад до перегляду", callback_data="bc_back_to_preview")]
     ])
 
-    await callback.message.edit_text(
+    text = (
         "🔗 <b>Додавання кнопки-посилання</b>\n\n"
         "Введіть назву кнопки та URL-адресу через вертикальну риску <code>|</code>.\n\n"
-        "Приклад:\n<code>Записатися на сайт | https://endo.kh.ua</code>",
-        parse_mode="HTML",
-        reply_markup=kb
+        "Приклад:\n<code>Записатися на сайт | https://endo.kh.ua</code>"
     )
+
+    await safe_edit_or_send(callback, text, reply_markup=kb)
     await callback.answer()
 
 
@@ -690,7 +690,7 @@ async def bc_remove_btn(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     preview_text, kb = build_broadcast_preview(data, users_count)
 
-    await callback.message.edit_text(preview_text, parse_mode="HTML", reply_markup=kb)
+    await safe_edit_or_send(callback, preview_text, reply_markup=kb)
     await callback.answer("Кнопку видалено")
 
 
@@ -704,7 +704,7 @@ async def bc_back_to_preview(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     preview_text, kb = build_broadcast_preview(data, users_count)
 
-    await callback.message.edit_text(preview_text, parse_mode="HTML", reply_markup=kb)
+    await safe_edit_or_send(callback, preview_text, reply_markup=kb)
     await callback.answer()
 
 
@@ -720,14 +720,14 @@ async def bc_send_now_ask(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="❌ Скасувати (повернутися)", callback_data="bc_back_to_preview")]
     ])
 
-    await callback.message.edit_text(
+    text = (
         f"⚠️ <b>УВАГА! ПІДТВЕРДЖЕННЯ РОЗСИЛКИ</b>\n\n"
         f"Ви збираєтеся надіслати це повідомлення <b>ВСІМ {users_count} користувачам</b> бота!\n\n"
         f"🧪 <i>Переконайтеся, що ви протестували повідомлення (натиснувши 'Надіслати тестове повідомлення собі').</i>\n\n"
-        f"Ви дійсно бажаєте розпочати масову розсилку прямо зараз?",
-        parse_mode="HTML",
-        reply_markup=kb
+        f"Ви дійсно бажаєте розпочати масову розсилку прямо зараз?"
     )
+
+    await safe_edit_or_send(callback, text, reply_markup=kb)
     await callback.answer()
 
 
@@ -751,12 +751,13 @@ async def bc_send_now_confirm(callback: CallbackQuery, state: FSMContext):
     }
     save_broadcast(bc_data)
 
-    await callback.message.edit_text(
+    text = (
         "🚀 <b>Розсилка запущена!</b>\n\n"
         "Повідомлення надсилаються користувачам у фоновому режимі.\n"
-        "Після завершення вам прийде підсумковий звіт.",
-        parse_mode="HTML"
+        "Після завершення вам прийде підсумковий звіт."
     )
+
+    await safe_edit_or_send(callback, text)
     await callback.answer()
 
     from workers.tasks import execute_broadcast_delivery
@@ -788,13 +789,13 @@ async def bc_schedule_ask(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад до перегляду", callback_data="bc_back_to_preview")]
     ])
 
-    await callback.message.edit_text(
+    text = (
         "⏰ <b>Планування дати та часу розсилки</b>\n\n"
         "Введіть дату та час у форматі <code>РРРР-ММ-ДД ГГ:ХХ</code>\n"
-        "<i>(наприклад, <code>2026-07-25 14:30</code>)</i> або оберіть швидкий варіант нижче:",
-        parse_mode="HTML",
-        reply_markup=kb
+        "<i>(наприклад, <code>2026-07-25 14:30</code>)</i> або оберіть швидкий варіант нижче:"
     )
+
+    await safe_edit_or_send(callback, text, reply_markup=kb)
     await callback.answer()
 
 
@@ -879,7 +880,12 @@ async def finalize_scheduling(msg_or_cb_msg, state: FSMContext, scheduled_str: s
     if isinstance(msg_or_cb_msg, Message):
         await msg_or_cb_msg.answer(text, parse_mode="HTML", reply_markup=kb)
     else:
-        await msg_or_cb_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        try:
+            await msg_or_cb_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            try: await msg_or_cb_msg.delete()
+            except Exception: pass
+            await msg_or_cb_msg.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "bc_list_scheduled")
