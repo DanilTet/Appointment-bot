@@ -96,3 +96,52 @@ async def get_admin_settings(admin_id):
 
 async def update_admin_setting(admin_id, key, value):
     supabase.table("admin_settings").upsert({"admin_id": admin_id, key: value}).execute()
+
+# --- ФУНКЦІЇ ДЛЯ РОЗСИЛОК (BROADCASTS) ---
+def get_all_bot_user_ids(exclude_admins=True):
+    """
+    Повертає список унікальних user_id всіх користувачів, які взаємодіяли з ботом.
+    """
+    try:
+        res = supabase.table("user_visits").select("user_id, is_admin").execute()
+        data = res.data or []
+        if exclude_admins:
+            user_ids = list(set(row['user_id'] for row in data if not row.get('is_admin') and row.get('user_id')))
+        else:
+            user_ids = list(set(row['user_id'] for row in data if row.get('user_id')))
+        return user_ids
+    except Exception as e:
+        print(f"Помилка отримання користувачів для розсилки: {e}")
+        return []
+
+def load_broadcasts():
+    try:
+        response = supabase.table("bot_state").select("value").eq("key", "broadcasts").execute()
+        return response.data[0]["value"] if (response.data and "value" in response.data[0]) else {}
+    except Exception as e:
+        print(f"Помилка завантаження розсилок: {e}")
+        return {}
+
+def save_broadcasts(broadcasts_dict):
+    try:
+        supabase.table("bot_state").upsert({
+            "key": "broadcasts",
+            "value": broadcasts_dict
+        }).execute()
+    except Exception as e:
+        print(f"Помилка збереження розсилок: {e}")
+
+def save_broadcast(bc_data):
+    bcs = load_broadcasts()
+    bcs[bc_data["id"]] = bc_data
+    save_broadcasts(bcs)
+
+def delete_broadcast(bc_id):
+    bcs = load_broadcasts()
+    if bc_id in bcs:
+        del bcs[bc_id]
+        save_broadcasts(bcs)
+
+def get_scheduled_broadcasts():
+    bcs = load_broadcasts()
+    return [bc for bc in bcs.values() if bc.get("status") == "scheduled"]

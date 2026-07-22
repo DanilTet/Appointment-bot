@@ -696,3 +696,104 @@ async def status_notification_monitor(bot: Bot):
             
         await asyncio.sleep(15)
 
+
+# --- 6. ШЕДУЛЕР ТА ВИКОНАННЯ РОЗСИЛОК (BROADCASTS) ---
+async def execute_broadcast_delivery(bot: Bot, broadcast_data: dict, target_user_ids: list = None) -> dict:
+    """
+    Виконує масову розсилку повідомлення заданому списку користувачів або всім користувачам бота.
+    """
+    from services.db import get_all_bot_user_ids, save_broadcast
+    
+    if target_user_ids is None:
+        target_user_ids = get_all_bot_user_ids(exclude_admins=True)
+        
+    text = broadcast_data.get("text", "")
+    photo_id = broadcast_data.get("photo_id")
+    btn_text = broadcast_data.get("btn_text")
+    btn_url = broadcast_data.get("btn_url")
+    
+    kb = None
+    if btn_text and btn_url:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=btn_text, url=btn_url)]
+        ])
+        
+    sent_count = 0
+    failed_count = 0
+    total = len(target_user_ids)
+    
+    for uid in target_user_ids:
+        try:
+            if photo_id:
+                await bot.send_photo(chat_id=uid, photo=photo_id, caption=text, parse_mode="HTML", reply_markup=kb)
+            else:
+                await bot.send_message(chat_id=uid, text=text, parse_mode="HTML", reply_markup=kb)
+            sent_count += 1
+        except Exception as e:
+            failed_count += 1
+            print(f"⚠️ [BROADCAST] Не вдалося надіслати {uid}: {e}", flush=True)
+            
+        await asyncio.sleep(0.05)  # Ліміт Telegram: ~20 пов/сек
+        
+    stats = {
+        "total": total,
+        "sent": sent_count,
+        "failed": failed_count,
+        "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    broadcast_data["status"] = "completed"
+    broadcast_data["stats"] = stats
+    save_broadcast(broadcast_data)
+    
+    return stats
+
+
+async def broadcast_scheduler(bot: Bot):
+    """
+    Фонова задача перевірки запланованих розсилок.
+    """
+    from services.db import get_scheduled_broadcasts
+    print("🤖 [BROADCAST] Запуск шедулера розсилок...", flush=True)
+    
+    while True:
+        try:
+            scheduled_bcs = get_scheduled_broadcasts()
+            now = datetime.now()
+            
+            for bc in scheduled_bcs:
+                scheduled_time_str = bc.get("scheduled_at")
+                if not scheduled_time_str:
+                    continue
+                    
+                try:
+                    sch_dt = datetime.strptime(scheduled_time_str, "%Y-%m-%d %H:%M")
+                except Exception:
+                    try:
+                        sch_dt = datetime.strptime(scheduled_time_str, "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        continue
+                        
+                if sch_dt <= now:
+                    print(f"📢 [BROADCAST] Запуск запланованої розсилки {bc.get('id')}...", flush=True)
+                    stats = await execute_broadcast_delivery(bot, bc)
+                    
+                    # Сповіщаємо адмінів про завершення
+                    report = (
+                        f"✅ <b>Запланована розсилка завершена!</b>\n\n"
+                        f"📊 Статистика:\n"
+                        f"👥 Всього отримувачів: <b>{stats['total']}</b>\n"
+                        f"✅ Успішно доставлено: <b>{stats['sent']}</b>\n"
+                        f"❌ Не доставлено (помилка/блок): <b>{stats['failed']}</b>"
+                    )
+                    for admin_id in ADMIN_IDS:
+                        try:
+                            await bot.send_message(admin_id, report, parse_mode="HTML")
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"🔥 [BROADCAST ERROR] Ошибка в шедулере рассылок: {e}", flush=True)
+            
+        await asyncio.sleep(30)
+
+

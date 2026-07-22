@@ -12,3 +12,9 @@ class Appointment(StatesGroup):
 # --- ДЛЯ ОТЗЫВОВ ---
 class Review(StatesGroup):
     text = State()       # Текст відгуку
+
+# --- ДЛЯ РОЗСИЛОК ---
+class BroadcastState(StatesGroup):
+    waiting_for_content = State()  # Очікування тексту/фото розсилки
+    waiting_for_button = State()   # Очікування назви та посилання кнопки (формат: Назва | посилання)
+    waiting_for_time = State()     # Очікування дати та часу розсилки

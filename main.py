@@ -15,6 +15,7 @@ from workers.tasks import (
     reminder_scheduler,
     execution_monitor,
     status_notification_monitor,
+    broadcast_scheduler,
     force_sync_event,
     pending_sync_dates
 )
@@ -138,6 +139,7 @@ async def main():
     asyncio.create_task(reminder_scheduler(bot))
     asyncio.create_task(execution_monitor(bot))
     asyncio.create_task(status_notification_monitor(bot))
+    asyncio.create_task(broadcast_scheduler(bot))
     
     await bot.set_my_commands([types.BotCommand(command="start", description="🏠 Головне меню")])
 
