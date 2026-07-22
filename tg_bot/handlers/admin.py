@@ -489,6 +489,17 @@ async def show_admin_panel(callback: CallbackQuery):
 # --- СИСТЕМА РОЗСИЛОК (BROADCAST SYSTEM) ---
 # ==========================================
 
+async def safe_edit_or_send(callback: CallbackQuery, text: str, reply_markup=None, parse_mode="HTML"):
+    try:
+        await callback.message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.bot.send_message(callback.from_user.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
 def build_broadcast_preview(data: dict, user_count: int):
     text = data.get("text", "<i>(Порожній текст)</i>")
     photo_id = data.get("photo_id")

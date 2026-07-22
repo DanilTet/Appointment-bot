@@ -103,16 +103,38 @@ def get_all_bot_user_ids(exclude_admins=True):
     Повертає список унікальних user_id всіх користувачів, які взаємодіяли з ботом.
     """
     try:
-        res = supabase.table("user_visits").select("user_id, is_admin").execute()
-        data = res.data or []
-        if exclude_admins:
-            user_ids = list(set(row['user_id'] for row in data if not row.get('is_admin') and row.get('user_id')))
-        else:
-            user_ids = list(set(row['user_id'] for row in data if row.get('user_id')))
-        return user_ids
+        user_ids = set()
+        
+        # 1. Запит унікальних відвідувачів з user_visits
+        try:
+            res_visits = supabase.table("user_visits").select("user_id, is_admin").execute()
+            data_visits = res_visits.data or []
+            for row in data_visits:
+                uid = row.get('user_id')
+                if uid:
+                    is_adm = row.get('is_admin') or (uid in ADMIN_IDS)
+                    if not (exclude_admins and is_adm):
+                        user_ids.add(int(uid))
+        except Exception as e:
+            print(f"Помилка читання user_visits: {e}")
+
+        # 2. Запит користувачів зAppointments (пацієнти з записом)
+        try:
+            res_appts = supabase.table("appointments").select("user_id").execute()
+            data_appts = res_appts.data or []
+            for row in data_appts:
+                uid = row.get('user_id')
+                if uid and int(uid) != 0:
+                    if not (exclude_admins and int(uid) in ADMIN_IDS):
+                        user_ids.add(int(uid))
+        except Exception as e:
+            print(f"Помилка читання appointments: {e}")
+
+        return list(user_ids)
     except Exception as e:
         print(f"Помилка отримання користувачів для розсилки: {e}")
         return []
+
 
 def load_broadcasts():
     try:
