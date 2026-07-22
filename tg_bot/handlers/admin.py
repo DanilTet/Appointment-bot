@@ -497,7 +497,10 @@ async def show_admin_panel(callback: CallbackQuery):
 
 async def safe_edit_or_send(callback: CallbackQuery, text: str, reply_markup=None, parse_mode="HTML"):
     try:
-        await callback.message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        else:
+            await callback.message.edit_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception:
         try:
             await callback.message.delete()

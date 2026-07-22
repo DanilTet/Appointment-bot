@@ -106,16 +106,21 @@ async def back_to_main_inline(callback: CallbackQuery):
     )
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    try:
-        if callback.message.photo:
-            await callback.message.edit_caption(caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
-        else:
-            await callback.message.edit_text(text=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
-    except Exception:
+    if callback.message.photo:
         try:
-            await callback.message.edit_reply_markup(reply_markup=inline_kb)
+            await callback.message.edit_caption(caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
+        except Exception:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=inline_kb)
+            except Exception:
+                pass
+    else:
+        try:
+            await callback.message.delete()
         except Exception:
             pass
+        photo = FSInputFile("photos/start_message/start_img.png")
+        await callback.message.answer_photo(photo=photo, caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
     await callback.answer()
 
 @router.callback_query(F.data == "info_menu")
