@@ -27,7 +27,9 @@ router = Router()
 @router.callback_query(F.data == "admin_settings")
 async def show_settings(callback: CallbackQuery):
     kb = await get_settings_kb(callback.from_user.id)
-    await callback.message.edit_caption(caption="⚙️ <b>Персональні налаштування сповіщень:</b>", reply_markup=kb, parse_mode="HTML")
+    text = "⚙️ <b>Персональні налаштування сповіщень:</b>"
+    await safe_edit_or_send(callback, text, reply_markup=kb)
+    await callback.answer()
 
 @router.callback_query(F.data.in_(["toggle_sync", "toggle_exec", "toggle_danilo"]))
 async def toggle_settings(callback: CallbackQuery):
@@ -481,7 +483,11 @@ async def show_admin_panel(callback: CallbackQuery):
         ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_inline")]
     ]
-    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    text = (
+        "🛠 <b>Головне меню адмін-панелі</b>\n\n"
+        "Оберіть потрібну дію нижче:"
+    )
+    await safe_edit_or_send(callback, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
 

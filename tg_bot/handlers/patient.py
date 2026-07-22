@@ -97,8 +97,25 @@ async def back_to_main_inline(callback: CallbackQuery):
     if callback.from_user.id in ADMIN_IDS:
         buttons.append([InlineKeyboardButton(text="🛠 Адмін-панель", callback_data="admin_panel_menu")])
 
+    welcome_text = (
+        "Вітаю! Я - <b>Тетернік Олег</b>, ваш лікар-ендоскопіст.\n"
+        "Цей бот допоможе вам швидко обрати зручний час та записатися на прийом (гастроскопія, колоноскопія, бронхоскопія чи консультація).\n\n"
+        "📞 <b>Телефон:</b> +380 99 475 09 67\n"
+        "📍 <b>Адреса:</b> м. Харків, просп. Героїв Харкова, 195\n\n"
+        "Оберіть дію нижче."
+    )
+
     inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_reply_markup(reply_markup=inline_kb)
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
+        else:
+            await callback.message.edit_text(text=welcome_text, parse_mode="HTML", reply_markup=inline_kb)
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=inline_kb)
+        except Exception:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data == "info_menu")
@@ -110,7 +127,18 @@ async def show_info_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="🧑‍💻 Про розробника", url="https://github.com/DanilTet")],
         [InlineKeyboardButton(text="🔙 Назад у головне меню", callback_data="back_to_main_inline")]
     ]
-    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    info_text = (
+        "ℹ️ <b>Інформація та корисні посилання</b>\n\n"
+        "Оберіть потрібний пункт нижче:"
+    )
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=info_text, parse_mode="HTML", reply_markup=inline_kb)
+        else:
+            await callback.message.edit_text(text=info_text, parse_mode="HTML", reply_markup=inline_kb)
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=inline_kb)
     await callback.answer()
 
 @router.callback_query(F.data == "faq_menu")
@@ -123,7 +151,18 @@ async def show_faq_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="❓ Хірургія", url=f"https://endo.kh.ua/surgery/{utm}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="info_menu")]
     ]
-    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    faq_text = (
+        "❓ <b>Часті питання про процедури</b>\n\n"
+        "Оберіть напрямок, щоб прочитати детальніше на сайті:"
+    )
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=faq_text, parse_mode="HTML", reply_markup=inline_kb)
+        else:
+            await callback.message.edit_text(text=faq_text, parse_mode="HTML", reply_markup=inline_kb)
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=inline_kb)
     await callback.answer()
 
 # ==========================================
